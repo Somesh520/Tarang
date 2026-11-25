@@ -1949,6 +1949,59 @@ $("#repeatBtn").classList.toggle("active", store.repeat !== "off");
 $("#repeatBtn").classList.toggle("one-mode", store.repeat === "one");
 renderSidebarPlaylists();
 setView("home");
+
+const installAppButton = $("#installAppBtn");
+let deferredInstallPrompt = null;
+const installedAsApp =
+  window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+if (installedAsApp) installAppButton.hidden = true;
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  installAppButton.hidden = true;
+  toast("Tarang installed", "ok");
+});
+
+installAppButton.addEventListener("click", async () => {
+  if (deferredInstallPrompt) {
+    const prompt = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    try {
+      await prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+      if (outcome === "accepted") toast("Tarang installed", "ok");
+    } catch (error) {
+      console.error("[pwa] Install prompt failed:", error);
+      toast("Couldn't open the install prompt. Try your browser menu.", "err");
+    }
+    return;
+  }
+
+  const isAppleMobile =
+    /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const instructions = isAppleMobile
+    ? "In Safari, tap Share, then choose Add to Home Screen."
+    : "Open your browser menu and choose Install app or Add to Home Screen.";
+
+  openModal(`<h3>Install Tarang</h3><p>${instructions}</p>
+    <div class="modal-actions"><button class="btn primary" id="closeInstall">Got it</button></div>`);
+  modalCard.querySelector("#closeInstall").addEventListener("click", closeModal);
+});
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error) => {
+      console.error("[pwa] Service worker registration failed:", error);
+    });
+  });
+}
 renderQueue();
 
 youtubeApiReady
