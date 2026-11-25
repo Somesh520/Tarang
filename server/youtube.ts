@@ -218,10 +218,28 @@ export async function relatedTracks(videoId: string, limit = 20, seedQuery?: str
     console.error("[related] watch-next failed:", err instanceof Error ? err.message : err);
   }
 
-  if (!seedQuery) return [];
+  // watch-next is blocked on datacenter IPs, so build the seed for the search
+  // fallback from oEmbed when the caller has no cached metadata for this id.
+  let seed = seedQuery;
+  if (!seed) {
+    try {
+      const res = await fetch(
+        `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+        { signal: AbortSignal.timeout(6_000) },
+      );
+      if (res.ok) {
+        const meta: any = await res.json();
+        if (meta?.title) seed = `${meta.title} ${meta.author_name || ""}`.trim();
+      }
+    } catch {
+      /* ignore, handled below */
+    }
+  }
+
+  if (!seed) return [];
 
   try {
-    const alt = await searchTracks(seedQuery, limit + 8);
+    const alt = await searchTracks(seed, limit + 8);
     const tracks = dedupe(alt).filter((track) => track.id !== videoId).slice(0, limit);
     relatedCache.set(videoId, tracks, RELATED_TTL);
     return tracks;
