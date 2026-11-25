@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#08090a" />
+<title>Tarang — highest quality music, instantly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/" aria-label="Tarang home">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#0a0b06" stroke-width="2.4" stroke-linecap="round"><path d="M4 14v-4M8 17V7M12 20V4M16 17V7M20 14v-4"/></svg>
+      </span>
+      <span>Tarang</span>
+    </a>
+
+    <nav class="side-nav" aria-label="Main">
+      <button class="nav-item active" data-view="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2z"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="nav-item" data-view="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+        <span>Search</span>
+      </button>
+      <button class="nav-item" data-view="library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M9 4v16M14 5l5 15"/></svg>
+        <span>Your library</span>
+      </button>
+    </nav>
+
+    <div class="side-sep"></div>
+
+    <div class="side-head">
+      <span>Playlists</span>
+      <button class="icon-btn sm" id="newPlaylistBtn" title="New playlist" aria-label="New playlist">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="playlist-list" id="playlistList"></div>
+
+    <div class="side-foot">
+      <a class="launch-link" href="/launch" target="_blank" rel="noopener">
+        <span class="spark"></span>
+        <span>
+          <b>Launch page</b>
+          <em>Founding access · 12.12.26</em>
+        </span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M7 17 17 7M9 7h8v8"/></svg>
+      </a>
+      <div class="resolver" id="resolverState"><span class="dot"></span> checking resolver…</div>
+    </div>
+  </aside>
+
+  <!-- ================= MAIN ================= -->
+  <main class="main" id="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+
+      <label class="searchbox" for="searchInput">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+        <input id="searchInput" type="search" placeholder="Search songs, artists, soundtracks" autocomplete="off" spellcheck="false" />
+        <kbd>⌘K</kbd>
+      </label>
+
+      <div class="top-right">
+        <button class="chip" id="qualityChip" title="Streaming quality">
+          <span class="qa-dot"></span><span id="qualityLabel">Hi-Fi</span>
+        </button>
+        <div class="avatar" title="Local profile">T</div>
+      </div>
+    </header>
+
+    <div class="view" id="view"></div>
+  </main>
+
+  <!-- ================= PLAYER ================= -->
+  <footer class="player" id="player">
+    <div class="now" id="nowBlock">
+      <div class="cover" id="pCover">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      </div>
+      <div class="meta">
+        <div class="t" id="pTitle">Nothing playing</div>
+        <div class="a" id="pArtist">Pick something to start</div>
+      </div>
+      <button class="icon-btn heart" id="likeBtn" title="Like" aria-label="Like">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-9.2A4.2 4.2 0 0 1 12 7a4.2 4.2 0 0 1 7 3.8C19 15.6 12 20 12 20z"/></svg>
+      </button>
+    </div>
+
+    <div class="center">
+      <div class="controls">
+        <button class="icon-btn" id="shuffleBtn" title="Shuffle" aria-label="Shuffle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        </button>
+        <button class="icon-btn" id="prevBtn" title="Previous" aria-label="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14l-9-7z"/></svg>
+        </button>
+        <button class="play-btn" id="playBtn" title="Play" aria-label="Play">
+          <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="icon-btn" id="nextBtn" title="Next" aria-label="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5l9 7-9 7z"/></svg>
+        </button>
+        <button class="icon-btn" id="repeatBtn" title="Repeat" aria-label="Repeat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          <span class="one" id="repeatOne">1</span>
+        </button>
+      </div>
+
+      <div class="seek-row">
+        <span class="time" id="tCur">0:00</span>
+        <div class="range-wrap">
+          <input class="range" type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+          <div class="range-buffer" id="seekBuffer"></div>
+        </div>
+        <span class="time" id="tDur">0:00</span>
+      </div>
+    </div>
+
+    <div class="player-right">
+      <div class="stream-badge" id="streamBadge" title="What's actually playing">—</div>
+      <button class="icon-btn" id="volBtn" title="Mute" aria-label="Mute">
+        <svg id="volIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>
+      </button>
+      <input class="range vol" type="range" id="vol" min="0" max="100" value="90" aria-label="Volume" />
+      <button class="icon-btn" id="lyricsBtn" title="Lyrics" aria-label="Lyrics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg>
+      </button>
+      <button class="icon-btn" id="queueBtn" title="Queue" aria-label="Queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h11M4 12h11M4 18h7M19 12v7M19 12l3-1"/><circle cx="17" cy="19" r="2"/></svg>
+      </button>
+    </div>
+  </footer>
+</div>
+
+<!-- ================= QUEUE DRAWER ================= -->
+<aside class="queue-panel" id="queuePanel" aria-hidden="true">
+  <div class="queue-head">
+    <div>
+      <h3>Queue</h3>
+      <p id="queueMeta">Nothing queued</p>
+    </div>
+    <div class="queue-head-actions">
+      <button class="btn-ghost sm" id="clearQueue">Clear</button>
+      <button class="icon-btn" id="closeQueue" aria-label="Close queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="queue-body" id="queueBody"></div>
+</aside>
+
+<!-- ================= NOW PLAYING · LYRICS STAGE ================= -->
+<section class="stage" id="lyricsPanel" aria-hidden="true">
+  <div class="stage-bg" id="lyArt"></div>
+  <div class="stage-tint"></div>
+
+  <button class="stage-close" id="closeLyrics" aria-label="Close lyrics view">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </button>
+
+  <div class="stage-inner">
+    <div class="stage-left">
+      <img class="stage-cover" id="lyCover" alt="" />
+      <div class="stage-meta">
+        <h3 id="lyTitle">Lyrics</h3>
+        <p id="lyricsMeta">Nothing playing</p>
+      </div>
+
+      <div class="stage-transport">
+        <input class="range" id="stageSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+        <div class="stage-times"><span id="stageCur">0:00</span><span id="stageDur">0:00</span></div>
+      </div>
+
+      <div class="stage-controls">
+        <button class="icon-btn stage-mode" id="stageShuffle" aria-label="Shuffle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        </button>
+        <button class="icon-btn" id="stagePrev" aria-label="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14l-9-7z"/></svg>
+        </button>
+        <button class="stage-play" id="stagePlay" aria-label="Play or pause">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="icon-btn" id="stageNext" aria-label="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5l9 7-9 7z"/></svg>
+        </button>
+        <button class="icon-btn stage-mode" id="stageRepeat" aria-label="Repeat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        </button>
+      </div>
+
+      <div class="ly-sync" role="group" aria-label="Lyric sync offset">
+        <button class="ly-nudge" id="lyMinus" title="Lyrics earlier" aria-label="Lyrics earlier">−</button>
+        <button class="ly-offset" id="lyOffset" title="Shift lyrics in time">0.0s</button>
+        <button class="ly-nudge" id="lyPlus" title="Lyrics later" aria-label="Lyrics later">+</button>
+      </div>
+    </div>
+
+    <div class="stage-right">
+      <div class="lyrics-body" id="lyricsBody">
+        <p class="ly-empty">Play a track to see its lyrics.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= MODAL ================= -->
+<div class="modal" id="modal" aria-hidden="true">
+  <div class="modal-card" id="modalCard"></div>
+</div>
+
+<div class="popover" id="popover" aria-hidden="true"></div>
+<div class="toasts" id="toasts"></div>
+
+<audio id="audio" preload="auto"></audio>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

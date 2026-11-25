@@ -1,0 +1,14 @@
+# Unrelated project folders in this workspace (video/story projects, not the app)
+video/
+the-iron-standard/
+mahabharat-60s/
+jaswant-untold-30s/
+
+# Tooling / local state
+.freebuff/
+.cloud-attachments/
+.agents/
+.claude/
+node_modules/
+.DS_Store
+*.log

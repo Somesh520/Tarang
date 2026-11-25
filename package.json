@@ -1,0 +1,10 @@
+{
+  "name": "tarang",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot server/index.ts",
+    "start": "bun server/index.ts"
+  }
+}
