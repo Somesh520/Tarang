@@ -213,14 +213,16 @@ function fromYtDlpOutput(stdout: string, videoId: string, quality: Quality): Res
 
 function stderrSummary(stderr: string): string {
   const lines = stderr.trim().split("\n").filter((line) => /error|warn|confirm|format|runtime/i.test(line));
-  const picked = (lines.length ? lines : stderr.trim().split("\n")).slice(-2).join(" | ").trim();
-  return picked.slice(0, 300);
+  const picked = (lines.length ? lines : stderr.trim().split("\n")).slice(-3).join(" | ").trim();
+  const runtime = /no supported javascript runtime/i.test(stderr) ? "[no-js-runtime] " : "";
+  return (runtime + picked).slice(0, 400);
 }
 
 async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolved> {
   const selector = SELECTORS[quality] ?? SELECTORS.hifi;
   const started = Date.now();
   let last: { code: string; message: string; detail?: string } | null = null;
+  const trail: string[] = [];
 
   for (const clients of RESOLVE_ATTEMPTS) {
     const args = ytdlpBaseArgs();
@@ -238,7 +240,9 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
       last = { ...classifyError(stderr), detail };
     }
 
-    console.error(`[ytdlp] ${videoId} clients=${clients || "default"} -> ${last.code}: ${detail}`);
+    const took = Math.round(Date.now() - started);
+    console.error(`[ytdlp] ${videoId} clients=${clients || "default"} -> ${last.code} in ${took}ms: ${detail}`);
+    trail.push(`${clients || "default"}=${last.code}(${took}ms): ${detail || "no stderr"}`);
     if (last.code === "UNAVAILABLE" || last.code === "AGE_RESTRICTED" || last.code === "TIMEOUT") break;
     if (Date.now() - started > ATTEMPT_BUDGET_MS) break;
   }
@@ -246,7 +250,7 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
   throw new ResolveError(
     last?.code || "RESOLVE_FAILED",
     last?.message || "Could not resolve an audio stream for this track.",
-    last?.detail,
+    trail.join(" || ").slice(0, 900),
   );
 }
 
