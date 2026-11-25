@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#08090a" />
-<title>Tarang — highest quality music, instantly</title>
+<title>Tarang — YouTube music player</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
@@ -57,7 +57,7 @@
         </span>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M7 17 17 7M9 7h8v8"/></svg>
       </a>
-      <div class="resolver" id="resolverState"><span class="dot"></span> checking resolver…</div>
+      <div class="resolver" id="resolverState"><span class="dot"></span> loading YouTube player…</div>
     </div>
   </aside>
 
@@ -75,12 +75,23 @@
       </label>
 
       <div class="top-right">
-        <button class="chip" id="qualityChip" title="Streaming quality">
-          <span class="qa-dot"></span><span id="qualityLabel">Hi-Fi</span>
-        </button>
         <div class="avatar" title="Local profile">T</div>
       </div>
     </header>
+
+    <section class="youtube-stage" id="youtubeStage" aria-label="YouTube player" hidden>
+      <div class="youtube-frame-wrap">
+        <div class="youtube-frame" id="youtubePlayer"></div>
+        <p class="youtube-error" id="youtubeError" role="status" hidden></p>
+      </div>
+      <div class="youtube-stage-meta">
+        <p class="youtube-eyebrow">Playing on YouTube</p>
+        <h2 id="youtubeTitle">Nothing playing</h2>
+        <p id="youtubeArtist"></p>
+        <a id="youtubeOpenLink" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer">Open on YouTube ↗</a>
+        <p class="youtube-disclaimer">YouTube playback; ads may appear.</p>
+      </div>
+    </section>
 
     <div class="view" id="view"></div>
   </main>
@@ -226,7 +237,6 @@
 <div class="popover" id="popover" aria-hidden="true"></div>
 <div class="toasts" id="toasts"></div>
 
-<audio id="audio" preload="auto"></audio>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

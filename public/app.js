@@ -1,4 +1,4 @@
-/* Tarang client — search, resolve, stream, queue, library, playlists. */
+/* Tarang client — search, YouTube embeds, queue, library, playlists. */
 
 import { taste } from "./taste.js";
 
@@ -6,12 +6,6 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 const LS_KEY = "tarang.v1";
-
-const QUALITY = {
-  hifi: { label: "Hi-Fi", note: "Opus · best available" },
-  data: { label: "Saver", note: "Opus · ~70 kbps" },
-  aac: { label: "AAC", note: "m4a · Safari-safe" },
-};
 
 /* ------------------------------ persistence ------------------------------ */
 
@@ -21,7 +15,6 @@ const defaults = () => ({
   recents: [],
   lyricOffsets: {},
   volume: 0.9,
-  quality: "hifi",
   repeat: "off",
   shuffle: false,
   muted: false,
@@ -57,18 +50,121 @@ const state = {
   queue: [],
   index: -1,
   current: null,
-  streamInfo: null,
   loading: false,
-  fallbackTried: false,
   viewParams: {},
 };
 
-const audio = $("#audio");
+const audioListeners = new Map();
+let youtubePlayer = null;
+let youtubePlayerReady = false;
+let youtubePlayerReadyPromise = null;
+
+const audio = {
+  player: null,
+  _volume: store.volume,
+  _muted: store.muted,
+  _playing: false,
+  addEventListener(type, callback) {
+    const listeners = audioListeners.get(type) || new Set();
+    listeners.add(callback);
+    audioListeners.set(type, listeners);
+  },
+  dispatch(type) {
+    for (const callback of audioListeners.get(type) || []) callback({ type, target: this });
+  },
+  attach(player) {
+    this.player = player;
+    this.volume = this._volume;
+    this.muted = this._muted;
+  },
+  get currentTime() {
+    const value = Number(this.player?.getCurrentTime?.());
+    return Number.isFinite(value) ? value : 0;
+  },
+  set currentTime(value) {
+    if (!this.player || !Number.isFinite(value)) return;
+    this.player.seekTo(Math.max(0, value), true);
+    queueMicrotask(() => this.dispatch("seeked"));
+  },
+  get duration() {
+    const value = Number(this.player?.getDuration?.());
+    return Number.isFinite(value) && value > 0 ? value : NaN;
+  },
+  get paused() {
+    return !this._playing;
+  },
+  get volume() {
+    return this._volume;
+  },
+  set volume(value) {
+    this._volume = Math.min(1, Math.max(0, Number(value) || 0));
+    if (this.player && !this._muted) this.player.setVolume(Math.round(this._volume * 100));
+  },
+  get muted() {
+    return this._muted;
+  },
+  set muted(value) {
+    this._muted = Boolean(value);
+    if (this.player) this._muted ? this.player.mute() : this.player.unMute();
+  },
+  get buffered() {
+    return { length: 0 };
+  },
+  play() {
+    this.player?.playVideo();
+    return Promise.resolve();
+  },
+  pause() {
+    this.player?.pauseVideo();
+  },
+};
+
 const view = $("#view");
 const main = $("#main");
 
 audio.volume = store.muted ? 0 : store.volume;
 $("#vol").value = String(Math.round((store.muted ? 0 : store.volume) * 100));
+
+function setYouTubeStatus(message, tone = "") {
+  const element = $("#resolverState");
+  if (!element) return;
+  element.classList.remove("ok", "bad");
+  if (tone) element.classList.add(tone);
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  element.replaceChildren(dot, document.createTextNode(message));
+}
+
+function loadYouTubeIframeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      settled = true;
+      reject(new Error("YouTube player API did not load."));
+    }, 15_000);
+
+    window.onYouTubeIframeAPIReady = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(window.YT);
+    };
+
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    script.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error("Couldn't load YouTube's player API."));
+    };
+    document.head.append(script);
+  });
+}
+
+const youtubeApiReady = loadYouTubeIframeApi();
 
 /* ------------------------------ helpers ------------------------------ */
 
@@ -255,12 +351,12 @@ async function renderHome() {
 
   view.innerHTML = `
     <div class="greeting">
-      <span class="eyebrow">${warm ? `Tuned to your last ${profile.plays} plays` : "Tarang · full quality streaming"}</span>
+      <span class="eyebrow">${warm ? `Tuned to your last ${profile.plays} plays` : "Tarang · YouTube playback"}</span>
       <h1>${greeting}, <span class="serif">listener.</span></h1>
       <p>${
         warm
           ? "Recommendations from YouTube's watch-next graph, re-ranked on this device by what you actually finish, skip and like."
-          : "Every track resolved to the highest audio stream the source has — Opus ~160 kbps, straight to your player. Play five tracks and your feed starts learning."
+          : "Tracks play in YouTube's embedded player. YouTube controls playback and may show ads. Play five tracks and your feed starts learning."
       }</p>
       <div class="chips">
         ${(warm ? taste.seedsFor(4).map((a) => a) : HOME_QUICK).map((q) => `<button data-quick="${esc(q)}">${esc(q)}</button>`).join("")}
@@ -291,7 +387,7 @@ async function renderColdHome() {
     $("#shelves").innerHTML =
       hint +
       data.shelves
-        .map((shelf) => shelfHTML(`home-${shelf.key}`, shelf.title, `${shelf.tracks.length} tracks · highest available quality`, shelf.tracks, shelf.query))
+        .map((shelf) => shelfHTML(`home-${shelf.key}`, shelf.title, `${shelf.tracks.length} tracks · YouTube player`, shelf.tracks, shelf.query))
         .join("");
     markPlaying();
   } catch (err) {
@@ -408,7 +504,7 @@ function renderSearchResults() {
     <div class="greeting" style="padding-bottom:6px">
       <span class="eyebrow">Search</span>
       <h1 style="font-size:26px">“${esc(state.query)}”</h1>
-      <p>${tracks.length} results · audio streamed at the highest quality the source serves</p>
+      <p>${tracks.length} results · playback provided by YouTube</p>
     </div>
     <div class="section-head" style="margin-top:24px">
       <h2>Songs</h2>
@@ -426,7 +522,7 @@ function renderSearch() {
   view.innerHTML = `<div class="greeting">
       <span class="eyebrow">Search</span>
       <h1>Find <span class="serif">anything.</span></h1>
-      <p>Search across the catalogue — songs, film soundtracks, covers, classical. Results play at Opus ~160 kbps.</p>
+      <p>Search songs, soundtracks, covers and more. Playback uses YouTube's embedded player.</p>
       <div class="chips">${HOME_QUICK.map((q) => `<button data-quick="${esc(q)}">${esc(q)}</button>`).join("")}</div>
     </div>`;
   setTimeout(() => $("#searchInput").focus(), 30);
@@ -688,40 +784,127 @@ function finalizeSession() {
   session = null;
 }
 
+function handleYouTubePlayerState(event) {
+  switch (event.data) {
+    case 0:
+      audio._playing = false;
+      audio.dispatch("ended");
+      break;
+    case 1:
+      audio._playing = true;
+      state.loading = false;
+      $("#playBtn").classList.remove("loading");
+      $("#youtubeError").hidden = true;
+      setYouTubeStatus("YouTube player connected", "ok");
+      audio.dispatch("loadedmetadata");
+      audio.dispatch("play");
+      audio.dispatch("playing");
+      break;
+    case 2:
+      audio._playing = false;
+      audio.dispatch("pause");
+      break;
+    case 3:
+      state.loading = true;
+      $("#playBtn").classList.add("loading");
+      break;
+    case 5:
+      audio.dispatch("loadedmetadata");
+      break;
+    default:
+      break;
+  }
+}
+
+function handleYouTubePlayerError(event) {
+  const messages = {
+    2: "YouTube rejected this video ID.",
+    5: "This video can't play in the embedded player.",
+    100: "This video is unavailable or private.",
+    101: "The video owner doesn't allow playback here.",
+    150: "The video owner doesn't allow playback here.",
+    153: "YouTube couldn't verify the embed request.",
+  };
+  audio._playing = false;
+  state.loading = false;
+  $("#playBtn").classList.remove("loading");
+  $("#youtubeError").textContent = messages[event.data] || "YouTube couldn't play this video.";
+  $("#youtubeError").hidden = false;
+  setYouTubeStatus("YouTube playback unavailable", "bad");
+  audio.dispatch("error");
+}
+
+async function ensureYouTubePlayer() {
+  if (youtubePlayerReady) return;
+  if (!youtubePlayerReadyPromise) {
+    youtubePlayerReadyPromise = youtubeApiReady
+      .then(
+        (YT) =>
+          new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              youtubePlayer?.destroy();
+              youtubePlayer = null;
+              reject(new Error("YouTube player didn't become ready."));
+            }, 15_000);
+
+            youtubePlayer = new YT.Player("youtubePlayer", {
+              width: "100%",
+              height: "100%",
+              playerVars: {
+                controls: 1,
+                enablejsapi: 1,
+                origin: location.origin,
+                playsinline: 1,
+                rel: 0,
+              },
+              events: {
+                onReady(event) {
+                  clearTimeout(timeout);
+                  youtubePlayerReady = true;
+                  audio.attach(event.target);
+                  resolve();
+                },
+                onStateChange: handleYouTubePlayerState,
+                onError: handleYouTubePlayerError,
+              },
+            });
+          }),
+      )
+      .catch((error) => {
+        youtubePlayerReadyPromise = null;
+        throw error;
+      });
+  }
+  return youtubePlayerReadyPromise;
+}
+
+async function loadYouTubeTrack(track) {
+  await ensureYouTubePlayer();
+  if (state.current?.id !== track.id) return;
+  $("#youtubeTitle").textContent = track.title;
+  $("#youtubeArtist").textContent = track.artist;
+  $("#youtubeOpenLink").href = `https://www.youtube.com/watch?v=${encodeURIComponent(track.id)}`;
+  youtubePlayer.loadVideoById({ videoId: track.id });
+}
+
 async function startTrack(track, options = {}) {
   if (!track) return;
   const sameTrack = state.current?.id === track.id;
   if (!sameTrack && !options.keepSession) finalizeSession();
   state.current = track;
-  state.streamInfo = null;
-  state.fallbackTried = false;
   state.loading = true;
+  audio._playing = false;
+  $("#youtubeStage").hidden = false;
+  $("#youtubeError").hidden = true;
+  setYouTubeStatus("Loading YouTube player…");
   if (lyricsOpen()) loadLyrics();
 
   $("#playBtn").classList.add("loading");
   renderNow();
   markPlaying();
 
-  // Kick the audio request off first: the server resolves the stream on this
-  // request, so playback no longer waits on a metadata round trip up front.
-  audio.src = `/api/stream?id=${encodeURIComponent(track.id)}&quality=${store.quality}`;
-  audio.load();
-  const starting = audio.play().catch((err) => {
-    if (err && err.name !== "AbortError" && err.name !== "NotAllowedError") toast("Couldn't start playback.", "err");
-  });
-
-  // Metadata + quality arrive in parallel and only decorate the UI.
-  api(`/api/track?id=${encodeURIComponent(track.id)}&quality=${store.quality}`)
-    .then((data) => {
-      if (state.current?.id !== track.id) return;
-      state.current = { ...track, ...data.track };
-      state.streamInfo = data.quality || null;
-      renderNow();
-    })
-    .catch(() => {});
-
   try {
-    await starting;
+    await loadYouTubeTrack(track);
 
     if (!sameTrack) {
       taste.record("play", state.current);
@@ -730,9 +913,8 @@ async function startTrack(track, options = {}) {
 
     rememberRecent(state.current);
     renderNow();
-    warmNext();
   } catch (err) {
-    toast(err.message, "err");
+    toast(err instanceof Error ? err.message : "Couldn't load the YouTube player.", "err");
     $("#playBtn").classList.remove("loading");
     state.loading = false;
   }
@@ -742,11 +924,6 @@ function rememberRecent(track) {
   if (!track) return;
   store.recents = [track, ...store.recents.filter((t) => t.id !== track.id)].slice(0, 40);
   saveStore();
-}
-
-function warmNext() {
-  const next = state.queue[state.index + 1];
-  if (next) fetch(`/api/track?id=${encodeURIComponent(next.id)}&quality=${store.quality}`).catch(() => {});
 }
 
 async function nextTrack(auto = false) {
@@ -887,6 +1064,7 @@ function renderNow() {
   const artist = $("#pArtist");
 
   if (!track) {
+    $("#youtubeStage").hidden = true;
     cover.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
     title.textContent = "Nothing playing";
     artist.textContent = "Pick something to start";
@@ -900,20 +1078,16 @@ function renderNow() {
   title.textContent = track.title;
   artist.textContent = track.artist;
   title.title = track.title;
+  $("#youtubeTitle").textContent = track.title;
+  $("#youtubeArtist").textContent = track.artist;
+  $("#youtubeOpenLink").href = `https://www.youtube.com/watch?v=${encodeURIComponent(track.id)}`;
 
   const liked = Boolean(store.liked[track.id]);
   $("#likeBtn").classList.toggle("liked", liked);
   $("#likeBtn").innerHTML = liked ? icon("heartFill") : icon("heart");
 
-  if (state.streamInfo) {
-    const itag = state.streamInfo.itag ? ` · ${state.streamInfo.itag}` : "";
-    const kbps = state.streamInfo.bitrateKbps ? ` · ${state.streamInfo.bitrateKbps}k` : "";
-    $("#streamBadge").textContent = `${(state.streamInfo.ext || "audio").toUpperCase()}${itag}${kbps}`;
-    $("#streamBadge").classList.toggle("hifi", store.quality === "hifi");
-  } else {
-    $("#streamBadge").textContent = QUALITY[store.quality].label;
-    $("#streamBadge").classList.toggle("hifi", store.quality === "hifi");
-  }
+  $("#streamBadge").textContent = "YouTube";
+  $("#streamBadge").classList.remove("hifi");
 
   updateMediaSession(track);
 }
@@ -948,10 +1122,7 @@ function updateProgress() {
     $("#stageDur").textContent = fmtTime(duration);
   }
 
-  if (audio.buffered && audio.buffered.length && duration) {
-    const end = audio.buffered.end(audio.buffered.length - 1);
-    $("#seekBuffer").style.width = `${Math.min(100, (end / duration) * 100)}%`;
-  }
+  $("#seekBuffer").style.width = "0";
 }
 
 function updateMediaSession(track) {
@@ -995,22 +1166,9 @@ audio.addEventListener("ended", () => {
   nextTrack(true);
 });
 
-audio.addEventListener("error", async () => {
+audio.addEventListener("error", () => {
   $("#playBtn").classList.remove("loading");
-  if (!state.current) return;
-
-  if (!state.fallbackTried && store.quality !== "aac") {
-    state.fallbackTried = true;
-    toast("This source didn't serve Opus to your browser — retrying as AAC.", "err");
-    store.quality = "aac";
-    saveStore();
-    updateQualityUI();
-    startTrack(state.current, { keepSession: true });
-    return;
-  }
-
-  toast("Couldn't play this track. Skipping.", "err");
-  if (state.queue.length > 1) nextTrack(true);
+  if (state.current) toast("YouTube couldn't play this video in the embedded player.", "err");
 });
 
 /* ------------------------------ controls ------------------------------ */
@@ -1076,48 +1234,6 @@ function updateVolIcon() {
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
   $("#volIcon")?.remove();
   volInput.value = String(Math.round((store.muted ? 0 : store.volume) * 100));
-}
-
-/* ------------------------------ quality ------------------------------ */
-
-function updateQualityUI() {
-  $("#qualityLabel").textContent = QUALITY[store.quality].label;
-  $("#qualityChip").title = QUALITY[store.quality].note;
-}
-
-$("#qualityChip").addEventListener("click", (event) => {
-  event.stopPropagation();
-  const rect = event.currentTarget.getBoundingClientRect();
-  openPopover(
-    rect,
-    `<div class="pop-label">Streaming quality</div>` +
-      Object.entries(QUALITY)
-        .map(
-          ([key, value]) =>
-            `<button class="pop-item ${store.quality === key ? "on" : ""}" data-quality="${key}">
-              ${store.quality === key ? icon("check") : ""}${value.label}<span style="margin-left:auto;color:#7d828a;font-size:11px">${value.note}</span>
-            </button>`,
-        )
-        .join(""),
-  );
-});
-
-function setQuality(quality) {
-  if (!QUALITY[quality] || store.quality === quality) return;
-  store.quality = quality;
-  saveStore();
-  updateQualityUI();
-  closePopover();
-  toast(`Quality: ${QUALITY[quality].label}`);
-
-  if (state.current) {
-    const position = audio.currentTime;
-    const wasPlaying = !audio.paused;
-    startTrack(state.current, { keepSession: true }).then(() => {
-      if (position > 0.5) audio.currentTime = position;
-      if (!wasPlaying) audio.pause();
-    });
-  }
 }
 
 /* ------------------------------ queue drawer ------------------------------ */
@@ -1531,11 +1647,6 @@ popover.addEventListener("click", (event) => {
   const btn = event.target.closest("button");
   if (!btn) return;
 
-  if (btn.dataset.quality) {
-    setQuality(btn.dataset.quality);
-    return;
-  }
-
   if (btn.dataset.addTo) {
     const playlist = store.playlists.find((pl) => pl.id === btn.dataset.addTo);
     const track = findTrack(btn.dataset.track);
@@ -1733,7 +1844,6 @@ $("#queueBody").addEventListener("click", (event) => {
       else {
         state.current = null;
         audio.pause();
-        audio.removeAttribute("src");
         renderNow();
         markPlaying();
       }
@@ -1832,7 +1942,6 @@ if ("mediaSession" in navigator) {
 
 setRangeFill($("#seek"));
 setRangeFill(volInput);
-updateQualityUI();
 updateVolIcon();
 updatePlayIcon();
 $("#shuffleBtn").classList.toggle("active", store.shuffle);
@@ -1842,20 +1951,10 @@ renderSidebarPlaylists();
 setView("home");
 renderQueue();
 
-api("/api/health")
-  .then((data) => {
-    const el = $("#resolverState");
-    if (data.resolver && data.resolver.available) {
-      const mode = data.resolver.mode === "direct+yt-dlp" ? "direct → yt-dlp" : "yt-dlp";
-      el.classList.add("ok");
-      el.innerHTML = `<span class="dot"></span> resolver live · ${mode} ${esc(data.resolver.version)}`;
-    } else {
-      el.classList.add("bad");
-      el.innerHTML = `<span class="dot"></span> resolver offline — install yt-dlp`;
-    }
-  })
-  .catch(() => {
-    const el = $("#resolverState");
-    el.classList.add("bad");
-    el.innerHTML = `<span class="dot"></span> server unreachable`;
-  });
+youtubeApiReady
+  .then(() => setYouTubeStatus("YouTube player ready", "ok"))
+  .catch(() => setYouTubeStatus("YouTube player unavailable", "bad"));
+
+setInterval(() => {
+  if (youtubePlayerReady && state.current) audio.dispatch("timeupdate");
+}, 500);
