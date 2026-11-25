@@ -41,17 +41,20 @@ function ytdlpBaseArgs(): string[] {
   const runtime = jsRuntime();
   if (runtime) args.push("--js-runtimes", runtime);
   if (COOKIES && existsSync(COOKIES)) args.push("--cookies", COOKIES);
+  args.push("--socket-timeout", "15", "--retries", "1");
   return args;
 }
 
 /**
- * Extractor attempts, in order: yt-dlp's own client set first, then a shotgun of
- * alternative clients, because a datacenter IP is often bot-checked on some of
- * them. One attempt can carry several clients; yt-dlp tries each in turn.
+ * Extractor attempts, in order: yt-dlp's own client set first, then optionally a
+ * shotgun of alternative clients. Override the whole list with YT_PLAYER_CLIENTS
+ * (pipe-separated, e.g. "|tv,web_embedded").
  */
-const RESOLVE_ATTEMPTS = ["", "tv,web_embedded,web_safari,android_vr"];
-const ATTEMPT_TIMEOUT_MS = 25_000;
-const ATTEMPT_BUDGET_MS = 50_000;
+const RESOLVE_ATTEMPTS = (process.env.YT_PLAYER_CLIENTS ?? "")
+  .split("|")
+  .map((entry) => entry.trim());
+const ATTEMPT_TIMEOUT_MS = Number(process.env.YT_ATTEMPT_TIMEOUT_MS) || 50_000;
+const ATTEMPT_BUDGET_MS = ATTEMPT_TIMEOUT_MS + 10_000;
 
 /** Itag ladder. Opus 251 (~160k) first, then m4a 140 (~128k) for Safari. */
 const SELECTORS: Record<Quality, string> = {
