@@ -89,7 +89,8 @@ const server = Bun.serve({
         const id = url.searchParams.get("id") || "";
         if (!VIDEO_ID.test(id)) return fail("BAD_ID", "Invalid track id.");
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 20, 1), 30);
-        const tracks = await relatedTracks(id, limit);
+        const seed = cachedMeta(id);
+        const tracks = await relatedTracks(id, limit, seed ? `${seed.title} ${seed.artist}` : undefined);
         tracks.forEach((track) => rememberMeta(track));
         return json({ id, count: tracks.length, tracks });
       }
@@ -177,7 +178,11 @@ const server = Bun.serve({
       return fileResponse(join(PUBLIC_DIR, "index.html"));
     } catch (err) {
       if (err instanceof ResolveError) {
-        return fail(err.code, err.message, err.code === "UNAVAILABLE" ? 404 : 502);
+        console.error("[api]", path, err.code, err.detail || err.message);
+        return json(
+          { error: err.code, message: err.message, ...(err.detail ? { detail: err.detail } : {}) },
+          err.code === "UNAVAILABLE" ? 404 : 502,
+        );
       }
       console.error("[api]", path, err);
       return fail("INTERNAL", err instanceof Error ? err.message : "Unexpected error.", 500);

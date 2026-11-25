@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { TtlCache } from "./cache";
 import { directEnabled, directResolve } from "./innertube-player";
 import type { Track } from "./youtube";
@@ -16,6 +17,41 @@ export type Resolved = {
 };
 
 const YTDLP = process.env.YT_DLP_PATH || "yt-dlp";
+const COOKIES = process.env.YT_COOKIES || "";
+
+/** yt-dlp shells out to a JS runtime to solve YouTube's signature challenges. */
+let jsRuntimeArg: string | null = null;
+function jsRuntime(): string {
+  if (jsRuntimeArg !== null) return jsRuntimeArg;
+  jsRuntimeArg = process.env.YT_JS_RUNTIME || "";
+  if (!jsRuntimeArg) {
+    for (const name of ["deno", "bun", "node"]) {
+      const path = Bun.which(name);
+      if (path) {
+        jsRuntimeArg = `${name}:${path}`;
+        break;
+      }
+    }
+  }
+  return jsRuntimeArg;
+}
+
+function ytdlpBaseArgs(): string[] {
+  const args = ["--no-warnings", "--no-progress", "--no-playlist"];
+  const runtime = jsRuntime();
+  if (runtime) args.push("--js-runtimes", runtime);
+  if (COOKIES && existsSync(COOKIES)) args.push("--cookies", COOKIES);
+  return args;
+}
+
+/**
+ * Extractor attempts, in order: yt-dlp's own client set first, then a shotgun of
+ * alternative clients, because a datacenter IP is often bot-checked on some of
+ * them. One attempt can carry several clients; yt-dlp tries each in turn.
+ */
+const RESOLVE_ATTEMPTS = ["", "tv,web_embedded,web_safari,android_vr"];
+const ATTEMPT_TIMEOUT_MS = 25_000;
+const ATTEMPT_BUDGET_MS = 50_000;
 
 /** Itag ladder. Opus 251 (~160k) first, then m4a 140 (~128k) for Safari. */
 const SELECTORS: Record<Quality, string> = {
@@ -128,37 +164,22 @@ function classifyError(stderr: string): { code: string; message: string } {
 }
 
 export class ResolveError extends Error {
-  constructor(public code: string, message: string) {
+  constructor(
+    public code: string,
+    message: string,
+    public detail?: string,
+  ) {
     super(message);
     this.name = "ResolveError";
   }
 }
 
-async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolved> {
-  const selector = SELECTORS[quality] ?? SELECTORS.hifi;
-  const { stdout, stderr, code } = await runYtDlp([
-    "--no-warnings",
-    "--no-progress",
-    "--no-playlist",
-    "--no-call-home",
-    "-f",
-    selector,
-    "-g",
-    "--print",
-    META_TEMPLATE,
-    `https://www.youtube.com/watch?v=${videoId}`,
-  ]);
-
-  if (code !== 0) {
-    const error = classifyError(stderr);
-    throw new ResolveError(error.code, error.message);
-  }
-
+/** Turn a successful yt-dlp run into a cached resolution. */
+function fromYtDlpOutput(stdout: string, videoId: string, quality: Quality): Resolved | null {
   const lines = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
   const url = lines.find((line) => /^https?:\/\//.test(line));
   const metaLine = lines.find((line) => line.startsWith("META\t"));
-
-  if (!url) throw new ResolveError("NO_URL", "The resolver returned no playable URL for this track.");
+  if (!url) return null;
 
   const fields = metaLine ? metaLine.split("\t") : [];
   const track: Track = {
@@ -188,6 +209,45 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
   // Refresh 5 minutes before the signed URL expires.
   urlCache.set(`${videoId}:${quality}`, resolved, Math.max(60_000, resolved.expiresAt - Date.now() - 5 * 60 * 1000));
   return resolved;
+}
+
+function stderrSummary(stderr: string): string {
+  const lines = stderr.trim().split("\n").filter((line) => /error|warn|confirm|format|runtime/i.test(line));
+  const picked = (lines.length ? lines : stderr.trim().split("\n")).slice(-2).join(" | ").trim();
+  return picked.slice(0, 300);
+}
+
+async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolved> {
+  const selector = SELECTORS[quality] ?? SELECTORS.hifi;
+  const started = Date.now();
+  let last: { code: string; message: string; detail?: string } | null = null;
+
+  for (const clients of RESOLVE_ATTEMPTS) {
+    const args = ytdlpBaseArgs();
+    if (clients) args.push("--extractor-args", `youtube:player_client=${clients}`);
+    args.push("-f", selector, "-g", "--print", META_TEMPLATE, `https://www.youtube.com/watch?v=${videoId}`);
+
+    const { stdout, stderr, code } = await runYtDlp(args, ATTEMPT_TIMEOUT_MS);
+    const detail = stderrSummary(stderr);
+
+    if (code === 0) {
+      const resolved = fromYtDlpOutput(stdout, videoId, quality);
+      if (resolved) return resolved;
+      last = { code: "NO_URL", message: "The resolver returned no playable URL for this track.", detail };
+    } else {
+      last = { ...classifyError(stderr), detail };
+    }
+
+    console.error(`[ytdlp] ${videoId} clients=${clients || "default"} -> ${last.code}: ${detail}`);
+    if (last.code === "UNAVAILABLE" || last.code === "AGE_RESTRICTED" || last.code === "TIMEOUT") break;
+    if (Date.now() - started > ATTEMPT_BUDGET_MS) break;
+  }
+
+  throw new ResolveError(
+    last?.code || "RESOLVE_FAILED",
+    last?.message || "Could not resolve an audio stream for this track.",
+    last?.detail,
+  );
 }
 
 /**

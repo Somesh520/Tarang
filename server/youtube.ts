@@ -183,32 +183,52 @@ function lockupToTrack(item: any): Track | null {
  * “Up next” candidates from YouTube's own watch-next graph: the same signal
  * YouTube's autoplay uses, before our local taste model re-ranks it.
  */
-export async function relatedTracks(videoId: string, limit = 20): Promise<Track[]> {
+export async function relatedTracks(videoId: string, limit = 20, seedQuery?: string): Promise<Track[]> {
   const cached = relatedCache.get(videoId);
   if (cached) return cached.slice(0, limit);
 
-  const data = await innertube("next", { context, videoId });
+  try {
+    const data = await innertube("next", { context, videoId });
 
-  const lockups: any[] = [];
-  const compact: any[] = [];
+    const lockups: any[] = [];
+    const compact: any[] = [];
 
-  (function walk(node: any) {
-    if (!node || typeof node !== "object") return;
-    if (node.lockupViewModel?.contentType === "LOCKUP_CONTENT_TYPE_VIDEO") lockups.push(node.lockupViewModel);
-    if (node.compactVideoRenderer) compact.push(node.compactVideoRenderer);
-    for (const key in node) {
-      const value = node[key];
-      if (value && typeof value === "object") walk(value);
+    (function walk(node: any) {
+      if (!node || typeof node !== "object") return;
+      if (node.lockupViewModel?.contentType === "LOCKUP_CONTENT_TYPE_VIDEO") lockups.push(node.lockupViewModel);
+      if (node.compactVideoRenderer) compact.push(node.compactVideoRenderer);
+      for (const key in node) {
+        const value = node[key];
+        if (value && typeof value === "object") walk(value);
+      }
+    })(data);
+
+    const tracks = dedupe([
+      ...lockups.map(lockupToTrack).filter((t): t is Track => t !== null),
+      ...compact.map(toTrack).filter((t): t is Track => t !== null),
+    ]).filter((track) => track.id !== videoId);
+
+    if (tracks.length) {
+      relatedCache.set(videoId, tracks, RELATED_TTL);
+      return tracks.slice(0, limit);
     }
-  })(data);
+  } catch (err) {
+    // Datacenter IPs often get a 403 on watch-next while search still answers,
+    // so fall through to the search-based queue instead of failing the request.
+    console.error("[related] watch-next failed:", err instanceof Error ? err.message : err);
+  }
 
-  const tracks = dedupe([
-    ...lockups.map(lockupToTrack).filter((t): t is Track => t !== null),
-    ...compact.map(toTrack).filter((t): t is Track => t !== null),
-  ]).filter((track) => track.id !== videoId);
+  if (!seedQuery) return [];
 
-  relatedCache.set(videoId, tracks, RELATED_TTL);
-  return tracks.slice(0, limit);
+  try {
+    const alt = await searchTracks(seedQuery, limit + 8);
+    const tracks = dedupe(alt).filter((track) => track.id !== videoId).slice(0, limit);
+    relatedCache.set(videoId, tracks, RELATED_TTL);
+    return tracks;
+  } catch (err) {
+    console.error("[related] search fallback failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
 }
 
 export const HOME_SHELVES: { key: string; title: string; query: string }[] = [
