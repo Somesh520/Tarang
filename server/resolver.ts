@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { TtlCache } from "./cache";
-import { directEnabled, directResolve } from "./innertube-player";
+import { directEnabled, directOnly, directResolve } from "./innertube-player";
 import type { Track } from "./youtube";
 
 export type Quality = "hifi" | "data" | "aac";
@@ -122,6 +122,11 @@ let available: boolean | null = null;
 let version = "";
 
 export async function probeResolver(): Promise<{ available: boolean; version: string }> {
+  if (directOnly()) {
+    available = true;
+    version = "direct-only";
+    return { available, version };
+  }
   if (available !== null) return { available, version };
   try {
     const res = await runYtDlp(["--version"], 8_000);
@@ -292,6 +297,14 @@ async function doResolve(videoId: string, quality: Quality): Promise<Resolved> {
     }
   }
 
+  if (directOnly()) {
+    throw new ResolveError(
+      "DIRECT_FAILED",
+      "YouTube's direct API did not return a stream for this track.",
+      "direct-only mode: the yt-dlp fallback is disabled",
+    );
+  }
+
   return doResolveYtDlp(videoId, quality);
 }
 
@@ -339,6 +352,7 @@ export function resolverStatus() {
   return {
     available,
     version,
-    mode: directEnabled() ? "direct+yt-dlp" : "yt-dlp",
+    mode: directOnly() ? "direct" : directEnabled() ? "direct+yt-dlp" : "yt-dlp",
+    ...(directOnly() ? { directOnly: true } : {}),
   };
 }

@@ -13,7 +13,9 @@
 
 import type { Quality } from "./resolver";
 
-const DIRECT_OFF = process.env.DIRECT_STREAM === "0";
+/** DIRECT_ONLY forces the direct InnerTube path on and disables the yt-dlp fallback. */
+const DIRECT_ONLY = process.env.DIRECT_ONLY === "1";
+const DIRECT_OFF = process.env.DIRECT_STREAM === "0" && !DIRECT_ONLY;
 
 const CLIENT_VERSION = "1.02";
 const CLIENT_UA =
@@ -48,6 +50,10 @@ let inflightSession: Promise<Session | null> | null = null;
 
 export function directEnabled(): boolean {
   return !DIRECT_OFF;
+}
+
+export function directOnly(): boolean {
+  return DIRECT_ONLY;
 }
 
 /** One watch-page load per session gives us the visitor identity + API key. */

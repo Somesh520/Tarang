@@ -193,9 +193,11 @@ const server = Bun.serve({
 await probeResolver();
 const status = resolverStatus();
 console.log(`Tarang running at http://localhost:${server.port}`);
-console.log(
-  status.available
-    ? `Resolver: ${status.mode} (yt-dlp ${status.version})`
-    : "Resolver: yt-dlp NOT FOUND — install it (brew install yt-dlp) or set YT_DLP_PATH",
-);
-if (status.mode === "direct+yt-dlp") console.log("Direct InnerTube (visionOS) enabled; yt-dlp is the fallback.");
+if (status.mode === "direct") {
+  console.log("Resolver: direct InnerTube only (DIRECT_ONLY=1, yt-dlp disabled)");
+} else if (status.available) {
+  console.log(`Resolver: ${status.mode} (yt-dlp ${status.version})`);
+  console.log("Direct InnerTube (visionOS) enabled; yt-dlp is the fallback.");
+} else {
+  console.log("Resolver: yt-dlp NOT FOUND — install it (brew install yt-dlp) or set YT_DLP_PATH");
+}
