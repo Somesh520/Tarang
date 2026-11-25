@@ -848,8 +848,8 @@ async function ensureYouTubePlayer() {
             }, 15_000);
 
             youtubePlayer = new YT.Player("youtubePlayer", {
-              width: "100%",
-              height: "100%",
+              width: 200,
+              height: 200,
               playerVars: {
                 controls: 1,
                 enablejsapi: 1,
