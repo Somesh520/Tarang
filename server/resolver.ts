@@ -18,6 +18,8 @@ export type Resolved = {
 
 const YTDLP = process.env.YT_DLP_PATH || "yt-dlp";
 const COOKIES = process.env.YT_COOKIES || "";
+/** Local convenience: read the browser's own profile instead of exporting a file. */
+const COOKIES_FROM_BROWSER = process.env.YT_COOKIES_FROM_BROWSER || "";
 
 /** yt-dlp shells out to a JS runtime to solve YouTube's signature challenges. */
 let jsRuntimeArg: string | null = null;
@@ -40,7 +42,8 @@ function ytdlpBaseArgs(): string[] {
   const args = ["--no-warnings", "--no-progress", "--no-playlist"];
   const runtime = jsRuntime();
   if (runtime) args.push("--js-runtimes", runtime);
-  if (COOKIES && existsSync(COOKIES)) args.push("--cookies", COOKIES);
+  if (COOKIES_FROM_BROWSER) args.push("--cookies-from-browser", COOKIES_FROM_BROWSER);
+  else if (COOKIES && existsSync(COOKIES)) args.push("--cookies", COOKIES);
   args.push("--socket-timeout", "15", "--retries", "1");
   return args;
 }

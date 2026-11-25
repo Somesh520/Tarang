@@ -12,3 +12,7 @@ jaswant-untold-30s/
 node_modules/
 .DS_Store
 *.log
+
+# YouTube cookies (never commit)
+cookies.txt
+.secrets/
