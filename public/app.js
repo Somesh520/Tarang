@@ -5,6 +5,23 @@ import { taste } from "./taste.js";
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+document.addEventListener(
+  "error",
+  (event) => {
+    const image = event.target;
+    if (
+      !(image instanceof HTMLImageElement) ||
+      !image.src.includes("/maxresdefault.jpg") ||
+      image.dataset.fallback
+    ) {
+      return;
+    }
+    image.dataset.fallback = "true";
+    image.src = image.src.replace("/maxresdefault.jpg", "/hqdefault.jpg");
+  },
+  true,
+);
+
 const LS_KEY = "tarang.v1";
 
 /* ------------------------------ persistence ------------------------------ */
@@ -256,11 +273,21 @@ main.addEventListener("scroll", () => main.classList.toggle("scrolled", main.scr
 
 /* ------------------------------ rendering: shared ------------------------------ */
 
+function upgradeThumbnail(url) {
+  const value = String(url || "");
+  if (value.includes("googleusercontent.com")) return value.replace(/=w\d+-h\d+/, "=w800-h800");
+  return value.replace(/\/(?:default|mqdefault|hqdefault|sddefault)\.(?:jpg|webp)$/, "/maxresdefault.jpg");
+}
+
 function registerList(key, tracks) {
   const seen = new Set();
   tracks = tracks.filter((track) => track && track.id && !seen.has(track.id) && seen.add(track.id));
   state.lists.set(key, tracks);
-  tracks.forEach((track) => track && track.id && state.registry.set(track.id, track));
+  tracks.forEach((track) => {
+    if (!track?.id) return;
+    track.thumbnail = upgradeThumbnail(track.thumbnail);
+    state.registry.set(track.id, track);
+  });
 }
 
 function rowsHTML(tracks, listKey, options = {}) {

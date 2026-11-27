@@ -95,6 +95,28 @@ function cleanMusicTitle(raw: string): string {
     .trim();
 }
 
+function thumbnailUrl(sources: any[], id: string): string {
+  const best = (Array.isArray(sources) ? sources : [])
+    .filter((source) => typeof source?.url === "string")
+    .map((source) => {
+      const dimensions = source.url.match(/=w(\d+)-h(\d+)/);
+      const width = Number(source.width) || Number(dimensions?.[1]) || 0;
+      const height = Number(source.height) || Number(dimensions?.[2]) || 0;
+      return { url: source.url as string, pixels: width * height };
+    })
+    .sort((a, b) => b.pixels - a.pixels)[0];
+
+  if (best) {
+    const maxRes = best.url.replace(
+      /\/(?:default|mqdefault|hqdefault|sddefault)\.(?:jpg|webp)$/,
+      "/maxresdefault.jpg",
+    );
+    if (maxRes !== best.url) return maxRes;
+    return best.url.replace(/=w\d+-h\d+/, "=w800-h800");
+  }
+  return `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`;
+}
+
 const DURATION_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/;
 
 /** flexColumns[1] is "Artist • Album • 4:29"; duration sometimes lives in fixedColumns. */
@@ -127,9 +149,7 @@ function musicItemToTrack(item: any): Track | null {
   if (duration < 45 || duration > 15 * 60) return null;
 
   const sources = item?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails ?? [];
-  const thumbnail = sources.length
-    ? sources[sources.length - 1].url
-    : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  const thumbnail = thumbnailUrl(sources, id);
 
   return { id, title, artist, duration, thumbnail };
 }
@@ -147,9 +167,7 @@ function panelItemToTrack(item: any): Track | null {
   if (duration < 45 || duration > 15 * 60) return null;
 
   const thumbs = item?.thumbnail?.thumbnails ?? [];
-  const thumbnail = thumbs.length
-    ? thumbs[thumbs.length - 1].url
-    : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  const thumbnail = thumbnailUrl(thumbs, id);
 
   return { id, title, artist, duration, thumbnail };
 }
@@ -255,7 +273,7 @@ function toTrack(video: any): Track | null {
   );
 
   const thumbs = video.thumbnail?.thumbnails ?? [];
-  const thumbnail = thumbs.length ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  const thumbnail = thumbnailUrl(thumbs, id);
 
   return {
     id,
@@ -349,9 +367,7 @@ function lockupToTrack(item: any): Track | null {
   if (duration < 45 || duration > 15 * 60) return null;
 
   const sources = item.contentImage?.thumbnailViewModel?.image?.sources ?? [];
-  const thumbnail = sources.length
-    ? sources[sources.length - 1].url
-    : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  const thumbnail = thumbnailUrl(sources, id);
 
   return { id, title, artist, duration, thumbnail, views };
 }
