@@ -576,7 +576,7 @@ button.tag:hover{border-color:rgba(217,255,75,.45);color:var(--accent)}
 
 /* ================= now playing · lyrics stage ================= */
 .stage{
-  position:fixed;inset:0;z-index:80;display:block;color:#fff;overflow:hidden;
+  position:fixed;inset:0;z-index:80;display:block;color:#fff;overflow:hidden;background:var(--bg);
   opacity:0;visibility:hidden;transition:opacity .34s ease,visibility .34s ease;
 }
 .stage.open{opacity:1;visibility:visible}
@@ -633,5 +633,47 @@ body.stage-open{overflow:hidden}
   .stage .lyrics-body{height:42vh;max-height:42vh;padding:6vh 0}
   .stage .ly-line{font-size:17px}
   .stage .ly-line.active{font-size:21px}
+}
+@media (max-width:600px){
+  .stage-close{top:max(12px,env(safe-area-inset-top));right:14px;width:36px;height:36px}
+  .stage-tint{background:linear-gradient(180deg,rgba(5,7,10,.91),rgba(5,7,10,.96) 42%,rgba(5,7,10,.98))}
+  .stage-inner{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr);
+    gap:10px;
+    align-content:stretch;
+    align-items:stretch;
+    padding:max(56px,calc(env(safe-area-inset-top) + 48px)) 16px max(10px,env(safe-area-inset-bottom));
+    overflow:hidden;
+  }
+  .stage-left{
+    display:grid;
+    grid-template-columns:clamp(72px,24vw,104px) minmax(0,1fr);
+    align-items:center;
+    gap:8px 12px;
+  }
+  .stage-cover{grid-column:1;grid-row:1/3;width:100%;max-width:none;border-radius:12px}
+  .stage-meta{grid-column:2;grid-row:1/3;min-width:0}
+  .stage-meta h3{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+  .stage-transport,.stage-controls,.ly-sync{grid-column:1/-1}
+  .stage-transport{margin:0}
+  .stage-times{margin-top:2px}
+  .stage-controls{justify-content:space-between;gap:4px}
+  .stage-controls .icon-btn{width:40px;height:40px}
+  .stage-play{width:44px;height:44px}
+  .ly-sync{justify-self:center}
+  .stage-right{height:auto;min-height:0;overflow:hidden}
+  .stage .lyrics-body{
+    height:100%;
+    max-height:none;
+    padding:14px 4px 24px;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+    mask-image:linear-gradient(to bottom,transparent,#000 5%,#000 94%,transparent);
+    -webkit-mask-image:linear-gradient(to bottom,transparent,#000 5%,#000 94%,transparent);
+  }
+  .stage .ly-line{font-size:18px;line-height:1.4;padding:9px 0}
+  .stage .ly-line.active{font-size:22px}
 }
 .stage .icon-btn.active{color:var(--accent)}
