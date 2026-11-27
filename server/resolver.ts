@@ -253,7 +253,14 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
     if (clients) args.push("--extractor-args", `youtube:player_client=${clients}`);
     args.push("-f", selector, "-g", "--print", META_TEMPLATE, `https://www.youtube.com/watch?v=${videoId}`);
 
-    const { stdout, stderr, code } = await runYtDlp(args, ATTEMPT_TIMEOUT_MS);
+    // Never let an attempt outlive the group budget, whatever the env asks for:
+    // a 50s attempt under a 45s budget is just a hung request.
+    const elapsed = Date.now() - started;
+    const timeout = Math.max(
+      5_000,
+      Math.min(ATTEMPT_TIMEOUT_MS, ATTEMPT_BUDGET_MS - elapsed, RESOLVE_BUDGET_MS - elapsed),
+    );
+    const { stdout, stderr, code } = await runYtDlp(args, timeout);
     const detail = stderrSummary(stderr);
 
     if (code === 0) {
@@ -281,10 +288,17 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
     }
   }
 
+  // Point at the actual cause instead of a bare "resolve failed": YouTube
+  // refusing every client from this network is fixed by a newer yt-dlp or a
+  // signed-in session, not by retrying.
+  const hint = /failed to extract any player response|sign in to confirm/i.test(trail.join(" "))
+    ? " | YouTube refused every client from this network — update yt-dlp (yt-dlp -U) or set YT_COOKIES_FROM_BROWSER=chrome"
+    : "";
+
   throw new ResolveError(
     last?.code || "RESOLVE_FAILED",
     last?.message || "Could not resolve an audio stream for this track.",
-    trail.join(" || ").slice(0, 900),
+    (trail.join(" || ") + hint).slice(0, 900),
   );
 }
 
@@ -402,6 +416,9 @@ export function resolverStatus() {
     available,
     version,
     mode: directOnly() ? "direct" : directEnabled() ? "direct+yt-dlp" : "yt-dlp",
+    // Surfaced so a blocked network is diagnosable without reading the source.
+    signedIn: Boolean(COOKIES_FROM_BROWSER || (COOKIES && existsSync(COOKIES))),
+    attemptTimeoutMs: ATTEMPT_TIMEOUT_MS,
     ...(directOnly() ? { directOnly: true } : {}),
   };
 }

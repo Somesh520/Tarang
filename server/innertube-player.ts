@@ -174,7 +174,15 @@ export async function directResolve(videoId: string, quality: Quality): Promise<
     if (fresh) data = await askPlayer(videoId, fresh);
   }
 
-  if (!data || data?.playabilityStatus?.status !== "OK") return null;
+  if (!data || data?.playabilityStatus?.status !== "OK") {
+    // Silently falling back hides why the direct path is useless on a network;
+    // YouTube's own status says it (LOGIN_REQUIRED, UNPLAYABLE, ...).
+    const status = data?.playabilityStatus;
+    if (status?.status) {
+      console.error(`[direct] ${videoId} ${status.status}: ${String(status.reason || "no reason given").slice(0, 120)}`);
+    }
+    return null;
+  }
 
   const formats = data?.streamingData?.adaptiveFormats ?? [];
   const format = pickFormat(formats, quality);

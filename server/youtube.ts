@@ -370,21 +370,21 @@ async function musicRadio(videoId: string, limit: number): Promise<Track[]> {
   };
 
   let data: any = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       data = await music("next", body);
       break;
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      if (attempt === 2) {
+      // The first 403 means the burst has already begun: take the cooldown now
+      // so the other requests in flight stop piling onto the same rate limit.
+      coolDownGraph();
+      if (attempt === 1) {
         console.error("[related] music radio unavailable:", detail);
-        coolDownGraph();
         return [];
       }
-      // Back off: instant retries make a 403 burst worse, not better.
-      const wait = 600 * (attempt + 1) ** 2;
-      console.error(`[related] music radio 403, retrying in ${wait}ms:`, detail);
-      await new Promise((resolve) => setTimeout(resolve, wait));
+      console.error("[related] music radio 403, retrying once:", detail);
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 
