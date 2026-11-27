@@ -291,11 +291,12 @@ function registerList(key, tracks) {
 }
 
 function rowsHTML(tracks, listKey, options = {}) {
-  const { showIndex = true, showViews = true } = options;
+  const { showIndex = true, showViews = true, showSimilar = false } = options;
   return `<div class="track-list" data-list="${esc(listKey)}">
     ${tracks
       .map(
         (track, i) => `
+      ${showSimilar ? '<div class="track-result">' : ""}
       <div class="trow" data-track-id="${esc(track.id)}" tabindex="0" role="button">
         <span class="idx">
           ${showIndex ? `<span class="idx-num">${i + 1}</span>` : ""}
@@ -309,7 +310,9 @@ function rowsHTML(tracks, listKey, options = {}) {
         <div class="t-views">${showViews ? esc(track.views || "") : ""}</div>
         <div class="t-dur">${fmtTime(track.duration)}</div>
         <button class="icon-btn sm t-more" data-menu aria-label="More options">${icon("more")}</button>
-      </div>`,
+      </div>
+      ${showSimilar ? `<div class="similar-recommendation"><button class="similar-toggle" type="button" data-similar-track="${esc(track.id)}" aria-expanded="false">More like this</button><div class="similar-content" hidden></div></div>` : ""}
+      ${showSimilar ? "</div>" : ""}`,
       )
       .join("")}
   </div>`;
@@ -552,8 +555,49 @@ function renderSearchResults() {
       <h2>Songs</h2>
       <button class="more" data-play-all="results">Play all</button>
     </div>
-    ${rowsHTML(tracks, "results")}`;
+    ${rowsHTML(tracks, "results", { showSimilar: true })}`;
   markPlaying();
+}
+
+async function toggleSearchSimilar(button) {
+  const panel = button.nextElementSibling;
+  const track = findTrack(button.dataset.similarTrack);
+  if (!panel || !track) return;
+
+  const opening = button.getAttribute("aria-expanded") !== "true";
+  button.setAttribute("aria-expanded", String(opening));
+  panel.hidden = !opening;
+  if (!opening) {
+    button.textContent = button.dataset.loading === "true" ? "Loading similar…" : "More like this";
+    return;
+  }
+  if (button.dataset.loaded === "true") {
+    button.textContent = "Hide similar";
+    return;
+  }
+  if (button.dataset.loading === "true") return;
+
+  button.dataset.loading = "true";
+  button.textContent = "Finding similar tracks…";
+  panel.innerHTML = '<p class="similar-empty">Finding tracks from this song’s radio…</p>';
+  try {
+    const data = await api(`/api/related?id=${encodeURIComponent(track.id)}&limit=18`);
+    if (!panel.isConnected) return;
+    const similar = taste.rank(data.tracks || [], { seed: track, excludeIds: [track.id], limit: 8 });
+    panel.innerHTML = similar.length
+      ? cardsHTML(similar, `search-similar-${track.id}`)
+      : '<p class="similar-empty">No similar tracks found for this song.</p>';
+    button.dataset.loaded = "true";
+    button.textContent = button.getAttribute("aria-expanded") === "true" ? "Hide similar" : "More like this";
+  } catch (error) {
+    if (!panel.isConnected) return;
+    panel.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    button.textContent = "Try similar tracks again";
+    toast(error.message || "Couldn't load similar tracks.", "err");
+  } finally {
+    delete button.dataset.loading;
+  }
 }
 
 function renderSearch() {
@@ -1811,6 +1855,14 @@ view.addEventListener("click", (event) => {
     event.stopPropagation();
     const row = menuBtn.closest("[data-track-id]");
     if (row) openTrackMenu(findTrack(row.dataset.trackId), menuBtn.getBoundingClientRect());
+    return;
+  }
+
+  const similarButton = event.target.closest("[data-similar-track]");
+  if (similarButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleSearchSimilar(similarButton);
     return;
   }
 
