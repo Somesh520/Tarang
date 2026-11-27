@@ -789,19 +789,24 @@ let recommendationSeedId = null;
 let recommendationPromise = Promise.resolve(null);
 let advancing = false;
 let advanceToken = 0;
+const AVOIDED_RECOMMENDATION_VARIANTS = /\b(?:lo[\s-]*fi|low[\s-]*fi|remix(?:es|ed|ing)?|mash[\s-]*ups?)\b/i;
 
 function chooseRecommendation(candidates, seed) {
   const seen = new Set();
   const unique = candidates.filter((track) => {
-    if (!track?.id || track.id === seed.id || seen.has(track.id)) return false;
+    if (
+      !track?.id ||
+      track.id === seed.id ||
+      seen.has(track.id) ||
+      AVOIDED_RECOMMENDATION_VARIANTS.test(track.title || "")
+    ) return false;
     seen.add(track.id);
     return true;
   });
   if (!unique.length) return null;
 
-  const recentIds = [...new Set(store.journal.slice(0, 60).map((entry) => entry.id))];
-  const fresh = taste.rank(unique, { excludeIds: [...recentIds, seed.id], seed, limit: 40 });
-  const ranked = fresh.length ? fresh : taste.rank(unique, { excludeIds: [seed.id], seed, limit: 40 });
+  const playedIds = store.journal.map((entry) => entry.id);
+  const ranked = taste.rank(unique, { excludeIds: playedIds, seed, limit: 40 });
   if (!ranked.length) return null;
 
   const pool = store.shuffle ? ranked.slice(0, Math.min(5, ranked.length)) : ranked.slice(0, 1);
@@ -989,6 +994,7 @@ async function startTrack(track, fromRecommendation = false) {
   state.current = track;
   state.loading = true;
   audio._playing = false;
+  syncMediaPlaybackState(false);
   prepareNextRecommendation(track);
   $("#youtubeStage").hidden = false;
   $("#youtubeError").hidden = true;
@@ -1181,6 +1187,7 @@ function updateMediaSession(track) {
 }
 
 function syncMediaPlaybackState(playing) {
+  $("#lyricsPanel").classList.toggle("is-playing", playing);
   if (!("mediaSession" in navigator)) return;
   try {
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
@@ -1345,7 +1352,17 @@ function lyricsOpen() {
   return lyricsPanel.classList.contains("open");
 }
 
+function clearLyricData() {
+  lyrics.synced = false;
+  lyrics.lines = [];
+  lyrics.timings = [];
+  lyrics.active = -1;
+  lyrics.wordIndex = -1;
+}
+
 function lyricsMessage(text) {
+  clearLyricData();
+  lyricsBody.classList.remove("lyric-empty");
   lyricsBody.innerHTML = `<p class="ly-empty">${esc(text)}</p>`;
 }
 
@@ -1366,12 +1383,37 @@ function renderLyrics(data) {
   const track = state.current;
 
   if (!data.found) {
+    clearLyricData();
     meta.textContent = track ? `No lyrics found · ${track.artist}` : "Nothing playing";
-    lyricsMessage("LRCLIB (free, community-run) has no match for this track yet.");
-    lyricsBody.insertAdjacentHTML("beforeend", `<p class="ly-note">source · LRCLIB</p>`);
+    lyricsBody.classList.add("lyric-empty");
+    lyricsBody.innerHTML = `<div class="ly-missing">
+      <svg class="ly-missing-cat" viewBox="0 0 220 190" role="img" aria-label="An innocent-looking cat">
+        <path class="ly-cat-sparkle ly-cat-sparkle-one" d="m27 83 3 8 8 3-8 3-3 8-3-8-8-3 8-3 3-8Z" fill="#d9ff4b"/>
+        <path class="ly-cat-sparkle ly-cat-sparkle-two" d="m192 75 2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6Z" fill="#70e9ff"/>
+        <path d="M55 79 48 26q-2-12 9-5l35 31q18-8 36 0l35-31q11-7 9 5l-7 53c15 22 13 54-3 74-13 16-31 23-52 23s-39-7-52-23C42 133 40 101 55 79Z" fill="#d99f6d" stroke="#f3d8b7" stroke-width="4" stroke-linejoin="round"/>
+        <path d="m58 62-4-29 25 22m83 7 4-29-25 22" fill="none" stroke="#f4b4aa" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M72 91q12-9 24 0m28 0q12-9 24 0" fill="none" stroke="#764f43" stroke-width="3" stroke-linecap="round"/>
+        <g class="ly-cat-eyes">
+          <ellipse cx="84" cy="106" rx="13" ry="17" fill="#fff8ec"/>
+          <ellipse cx="136" cy="106" rx="13" ry="17" fill="#fff8ec"/>
+          <ellipse cx="87" cy="108" rx="7" ry="11" fill="#26313d"/>
+          <ellipse cx="133" cy="108" rx="7" ry="11" fill="#26313d"/>
+          <circle cx="89" cy="103" r="3" fill="white"/>
+          <circle cx="135" cy="103" r="3" fill="white"/>
+        </g>
+        <ellipse cx="68" cy="124" rx="12" ry="6" fill="#ee9c9b" opacity=".45"/>
+        <ellipse cx="152" cy="124" rx="12" ry="6" fill="#ee9c9b" opacity=".45"/>
+        <path d="m105 126 5-4 5 4-5 5-5-5Zm5 6q-1 8-9 9m9-9q1 8 9 9" fill="#80514c" stroke="#80514c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M63 128 35 123m29 13-27 4m120-12 28-5m-29 13 27 4" fill="none" stroke="#f3d8b7" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <p class="ly-missing-caption">No lyrics? I checked everywhere…</p>
+      <p class="ly-missing-detail">This tiny detective couldn't find them either.</p>
+      <p class="ly-missing-source">source · LRCLIB</p>
+    </div>`;
     return;
   }
 
+  lyricsBody.classList.remove("lyric-empty");
   const synced = Boolean(data.synced && data.lines.length);
   lyrics.synced = synced;
   lyrics.lines = synced ? data.lines : [];
