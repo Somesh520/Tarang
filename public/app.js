@@ -1411,7 +1411,13 @@ async function loadLyrics() {
   lyricsMessage("Finding lyrics…");
 
   try {
-    const data = await api(`/api/lyrics?id=${encodeURIComponent(track.id)}`);
+    const params = new URLSearchParams({
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      duration: String(track.duration || 0),
+    });
+    const data = await api(`/api/lyrics?${params}`);
     if (state.current?.id !== track.id) return;
     renderLyrics(data);
   } catch (err) {

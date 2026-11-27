@@ -76,6 +76,7 @@ const server = Bun.serve({
           HOME_SHELVES.map(async (shelf) => {
             try {
               const tracks = await searchTracks(shelf.query, 14);
+              tracks.forEach((track) => rememberMeta(track));
               return { ...shelf, tracks };
             } catch (err) {
               return { ...shelf, tracks: [] as Track[] };
@@ -143,7 +144,22 @@ const server = Bun.serve({
         const id = url.searchParams.get("id") || "";
         if (!VIDEO_ID.test(id)) return fail("BAD_ID", "Invalid track id.");
 
-        let track = cachedMeta(id) ?? null;
+        const title = url.searchParams.get("title")?.trim() || "";
+        const artist = url.searchParams.get("artist")?.trim() || "";
+        const requestedDuration = Number(url.searchParams.get("duration"));
+        let track: Track | null =
+          title && artist && title.length <= 300 && artist.length <= 200
+            ? {
+                id,
+                title,
+                artist,
+                duration:
+                  Number.isFinite(requestedDuration) && requestedDuration > 0
+                    ? requestedDuration
+                    : 0,
+                thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+              }
+            : cachedMeta(id) ?? null;
         if (!track) {
           const resolved = await resolve(id, "data").catch(() => null);
           track = resolved?.track ?? null;
