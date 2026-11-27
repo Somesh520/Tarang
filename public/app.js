@@ -874,10 +874,12 @@ function handleYouTubePlayerState(event) {
   switch (event.data) {
     case 0:
       audio._playing = false;
+      syncMediaPlaybackState(false);
       audio.dispatch("ended");
       break;
     case 1:
       audio._playing = true;
+      syncMediaPlaybackState(true);
       state.loading = false;
       $("#playBtn").classList.remove("loading");
       $("#youtubeError").hidden = true;
@@ -894,6 +896,7 @@ function handleYouTubePlayerState(event) {
       break;
     case 2:
       audio._playing = false;
+      syncMediaPlaybackState(false);
       audio.dispatch("pause");
       break;
     case 3:
@@ -918,6 +921,7 @@ function handleYouTubePlayerError(event) {
     153: "YouTube couldn't verify the embed request.",
   };
   audio._playing = false;
+  syncMediaPlaybackState(false);
   state.loading = false;
   $("#playBtn").classList.remove("loading");
   $("#youtubeError").textContent = messages[event.data] || "YouTube couldn't play this video.";
@@ -1204,6 +1208,13 @@ function updateProgress() {
   const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : state.current?.duration || 0;
   const current = audio.currentTime || 0;
   const pct = duration ? (current / duration) * 100 : 0;
+  if ("mediaSession" in navigator && typeof navigator.mediaSession.setPositionState === "function" && duration > 0) {
+    try {
+      navigator.mediaSession.setPositionState({ duration, playbackRate: 1, position: Math.min(current, duration) });
+    } catch {
+      /* unsupported */
+    }
+  }
 
   $("#seek").value = String(Math.round(pct * 10));
   setRangeFill($("#seek"));
@@ -1230,6 +1241,15 @@ function updateMediaSession(track) {
       album: "Tarang",
       artwork: [{ src: track.thumbnail, sizes: "512x512", type: "image/jpeg" }],
     });
+  } catch {
+    /* unsupported */
+  }
+}
+
+function syncMediaPlaybackState(playing) {
+  if (!("mediaSession" in navigator)) return;
+  try {
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
   } catch {
     /* unsupported */
   }
@@ -2059,6 +2079,59 @@ if ("mediaSession" in navigator) {
   }
 }
 
+const installAppBtn = $("#installAppBtn");
+let installPrompt = null;
+const isIOSDevice =
+  /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = () =>
+  window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+installAppBtn.hidden = isStandalone();
+
+function showInstallHelp() {
+  const instructions = isIOSDevice
+    ? "<li>Safari me Share button tap karo.</li><li><b>Add to Home Screen</b> select karo.</li><li><b>Add</b> tap karke Tarang icon kholo.</li>"
+    : "<li>Browser menu (⋮) kholo.</li><li><b>Install app</b> ya <b>Add to Home screen</b> choose karo.</li>";
+  const secureNote = window.isSecureContext ? "" : "<p class=\"install-note\">PWA install ke liye HTTPS website chahiye.</p>";
+  openModal(
+    `<h3>Install Tarang</h3><p>App ko Home Screen par add karo:</p><ol class="install-steps">${instructions}</ol>${secureNote}<p class="install-note">Background playback best-effort hai. iOS ya YouTube iframe screen lock/background par playback rok sakte hain.</p><div class="modal-actions"><button class="btn primary" data-install-close>Done</button></div>`,
+  );
+  modalCard.querySelector("[data-install-close]").addEventListener("click", closeModal);
+}
+
+installAppBtn.addEventListener("click", async () => {
+  if (isStandalone()) {
+    toast("Tarang is already installed");
+    return;
+  }
+  if (!installPrompt) {
+    showInstallHelp();
+    return;
+  }
+
+  const prompt = installPrompt;
+  installPrompt = null;
+  try {
+    await prompt.prompt();
+    const choice = await prompt.userChoice;
+    if (choice.outcome === "accepted") toast("Tarang is installing", "ok");
+  } catch (error) {
+    console.error("[pwa] Install prompt failed:", error);
+    toast("Could not open the install prompt", "err");
+  }
+});
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+});
+
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  installAppBtn.hidden = true;
+  toast("Tarang installed", "ok");
+});
+
 /* ------------------------------ boot ------------------------------ */
 
 setRangeFill($("#seek"));
@@ -2072,30 +2145,10 @@ renderSidebarPlaylists();
 setView("home");
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", async () => {
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(
-        registrations
-          .filter((registration) =>
-            [registration.active, registration.waiting, registration.installing].some((worker) => {
-              if (!worker) return false;
-              const url = new URL(worker.scriptURL);
-              return url.origin === location.origin && url.pathname === "/sw.js";
-            }),
-          )
-          .map((registration) => registration.unregister()),
-      );
-
-      const cacheNames = await caches.keys();
-      await Promise.all(
-        cacheNames
-          .filter((name) => name.startsWith("tarang-shell-"))
-          .map((name) => caches.delete(name)),
-      );
-    } catch (error) {
-      console.error("[pwa] Service worker cleanup failed:", error);
-    }
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((error) => {
+      console.error("[pwa] Service worker registration failed:", error);
+    });
   });
 }
 renderQueue();
