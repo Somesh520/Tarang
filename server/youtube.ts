@@ -344,10 +344,24 @@ function lockupToTrack(item: any): Track | null {
 }
 
 /**
+ * YouTube answers the `next` graph with 403 when a burst of calls arrives, and
+ * sometimes keeps doing it for minutes. Once that happens, stop hammering it:
+ * serve recommendations from the catalogue search until the cooldown expires.
+ */
+const GRAPH_COOLDOWN_MS = 90_000;
+let graphCooldownUntil = 0;
+const graphCoolingDown = () => Date.now() < graphCooldownUntil;
+const coolDownGraph = () => {
+  graphCooldownUntil = Date.now() + GRAPH_COOLDOWN_MS;
+};
+
+/**
  * YouTube Music radio: the same "up next" queue the music app builds for a
  * seed song. Music-only and artist-coherent, unlike the video watch-next graph.
  */
 async function musicRadio(videoId: string, limit: number): Promise<Track[]> {
+  if (graphCoolingDown()) return [];
+
   const body = {
     context: musicContext,
     videoId,
@@ -355,17 +369,26 @@ async function musicRadio(videoId: string, limit: number): Promise<Track[]> {
     isAudioOnly: true,
   };
 
-  let data: any;
-  try {
-    data = await music("next", body);
-  } catch (err) {
-    // YouTube rate-limits bursts of `next` calls with a 403 that clears in
-    // under a second, so one short retry recovers the radio instead of
-    // dropping the whole recommendation list.
-    console.error("[related] music radio 403, retrying:", err instanceof Error ? err.message : err);
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    data = await music("next", body);
+  let data: any = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      data = await music("next", body);
+      break;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      if (attempt === 2) {
+        console.error("[related] music radio unavailable:", detail);
+        coolDownGraph();
+        return [];
+      }
+      // Back off: instant retries make a 403 burst worse, not better.
+      const wait = 600 * (attempt + 1) ** 2;
+      console.error(`[related] music radio 403, retrying in ${wait}ms:`, detail);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
   }
+
+  if (!data) return [];
 
   const panels: any[] = [];
   (function walk(node: any) {
@@ -398,7 +421,16 @@ async function oembedSeed(videoId: string): Promise<string> {
 }
 
 async function legacyRelated(videoId: string, seedQuery?: string): Promise<Track[]> {
-  const data = await innertube("next", { context, videoId });
+  if (graphCoolingDown()) return [];
+
+  let data: any;
+  try {
+    data = await innertube("next", { context, videoId });
+  } catch (err) {
+    console.error("[related] innertube next failed:", err instanceof Error ? err.message : err);
+    coolDownGraph();
+    return [];
+  }
 
   const lockups: any[] = [];
   const compact: any[] = [];
@@ -440,7 +472,7 @@ export async function relatedTracks(videoId: string, limit = 20, seedQuery?: str
     console.error("[related] music radio failed:", err instanceof Error ? err.message : err);
   }
 
-  if (tracks.length < 5) {
+  if (tracks.length < 5 && !graphCoolingDown()) {
     try {
       const fallback = await legacyRelated(videoId, seedQuery);
       const seen = new Set(tracks.map((track) => track.id));

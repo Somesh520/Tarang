@@ -959,7 +959,7 @@ async function startTrack(track, options = {}) {
     if (state.current?.id !== track.id || !audio.paused) return;
     toast("This track isn't loading. Skipping.", "err");
     if (state.queue.length > 1) nextTrack(true);
-  }, 20_000);
+  }, 40_000);
 
   // Metadata only decorates the UI; playback never waits on it.
   api(`/api/track?id=${encodeURIComponent(track.id)}&quality=${store.quality}`)

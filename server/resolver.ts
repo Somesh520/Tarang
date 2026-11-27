@@ -61,9 +61,9 @@ const RESOLVE_ATTEMPTS = (process.env.YT_PLAYER_CLIENTS ?? "")
  * empty player response and then works on the next request, so a fast failure
  * is retried once — but no attempt is allowed to sit for a minute.
  */
-const ATTEMPT_TIMEOUT_MS = Number(process.env.YT_ATTEMPT_TIMEOUT_MS) || 15_000;
-const ATTEMPT_BUDGET_MS = Number(process.env.YT_ATTEMPT_BUDGET_MS) || 20_000;
-const RESOLVE_BUDGET_MS = Number(process.env.YT_RESOLVE_BUDGET_MS) || 30_000;
+const ATTEMPT_TIMEOUT_MS = Number(process.env.YT_ATTEMPT_TIMEOUT_MS) || 25_000;
+const ATTEMPT_BUDGET_MS = Number(process.env.YT_ATTEMPT_BUDGET_MS) || 40_000;
+const RESOLVE_BUDGET_MS = Number(process.env.YT_RESOLVE_BUDGET_MS) || 45_000;
 const FAST_FAIL_MS = 10_000;
 
 /** Itag ladder. Opus 251 (~160k) first, then m4a 140 (~128k) for Safari. */
@@ -267,7 +267,9 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
     const took = Math.round(Date.now() - started);
     console.error(`[ytdlp] ${videoId} clients=${clients || "default"} -> ${last.code} in ${took}ms: ${detail}`);
     trail.push(`${clients || "default"}=${last.code}(${took}ms): ${detail || "no stderr"}`);
-    if (last.code === "UNAVAILABLE" || last.code === "AGE_RESTRICTED" || last.code === "TIMEOUT") break;
+    // A timeout is not final: the next client set can still answer quickly, and
+    // giving up on the first one is how a resolvable track turns into a failure.
+    if (last.code === "UNAVAILABLE" || last.code === "AGE_RESTRICTED") break;
     if (Date.now() - started > ATTEMPT_BUDGET_MS) break;
 
     // An empty player response usually clears on the next request, so retry the
@@ -359,7 +361,9 @@ export async function resolve(videoId: string, quality: Quality = "hifi"): Promi
         return await Promise.race([doResolve(videoId, quality), budget]);
       } catch (err) {
         if (err instanceof ResolveError) {
-          failureCache.set(key, { code: err.code, message: err.message, detail: err.detail }, FAILURE_TTL);
+          // A timeout is transient, so it is remembered only briefly.
+          const ttl = err.code === "TIMEOUT" ? 15_000 : FAILURE_TTL;
+          failureCache.set(key, { code: err.code, message: err.message, detail: err.detail }, ttl);
         }
         throw err;
       } finally {
