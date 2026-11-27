@@ -45,7 +45,7 @@ const SCRIPTS = [
 ];
 
 function emptyState() {
-  return { events: [], searches: [], dislikes: {}, autoplay: true, version: 2 };
+  return { events: [], searches: [], dislikes: {}, version: 2 };
 }
 
 function load() {
@@ -189,7 +189,6 @@ const api = {
       likes,
       lastPlayed,
       disliked: db.dislikes,
-      autoplay: db.autoplay !== false,
       totalEvents: db.events.length,
     };
   },
@@ -304,15 +303,6 @@ const api = {
   /** Seed artists used to widen the candidate pool. */
   seedsFor(limit = 3) {
     return this.topArtists(limit).map((entry) => entry.name);
-  },
-
-  setAutoplay(value) {
-    db.autoplay = Boolean(value);
-    persist();
-  },
-
-  getAutoplay() {
-    return db.autoplay !== false;
   },
 
   stats() {

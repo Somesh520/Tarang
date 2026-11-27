@@ -61,15 +61,19 @@ self.addEventListener("fetch", (event) => {
   if (!SHELL_PATHS.has(url.pathname)) return;
   event.respondWith((async () => {
     const cached = await caches.match(request);
-    if (cached) return cached;
-    const response = await fetch(request);
-    if (response.ok) {
-      try {
-        await (await caches.open(CACHE_NAME)).put(request, response.clone());
-      } catch (error) {
-        console.error("[pwa] Could not cache app asset:", error);
+    try {
+      const response = await fetch(request);
+      if (response.ok) {
+        try {
+          await (await caches.open(CACHE_NAME)).put(request, response.clone());
+        } catch (error) {
+          console.error("[pwa] Could not cache app asset:", error);
+        }
       }
+      return response;
+    } catch (error) {
+      if (cached) return cached;
+      throw error;
     }
-    return response;
   })());
 });

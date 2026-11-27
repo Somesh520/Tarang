@@ -1,4 +1,4 @@
-/* Tarang client — search, YouTube embeds, queue, library, playlists. */
+/* Tarang client — search, YouTube embeds, personalized radio, library, playlists. */
 
 import { taste } from "./taste.js";
 
@@ -30,6 +30,7 @@ const defaults = () => ({
   liked: {},
   playlists: [],
   recents: [],
+  journal: [],
   lyricOffsets: {},
   volume: 0.9,
   repeat: "off",
@@ -40,7 +41,16 @@ const defaults = () => ({
 function loadStore() {
   try {
     const raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-    return { ...defaults(), ...raw, liked: raw.liked || {}, playlists: raw.playlists || [], recents: raw.recents || [] };
+    const recents = Array.isArray(raw.recents) ? raw.recents : [];
+    return {
+      ...defaults(),
+      ...raw,
+      liked: raw.liked || {},
+      playlists: raw.playlists || [],
+      recents,
+      journal: Array.isArray(raw.journal) ? raw.journal : recents,
+      repeat: raw.repeat === "one" ? "one" : "off",
+    };
   } catch {
     return defaults();
   }
@@ -64,8 +74,6 @@ const state = {
   results: [],
   lists: new Map(),
   registry: new Map(),
-  queue: [],
-  index: -1,
   current: null,
   loading: false,
   viewParams: {},
@@ -140,16 +148,6 @@ const main = $("#main");
 audio.volume = store.muted ? 0 : store.volume;
 $("#vol").value = String(Math.round((store.muted ? 0 : store.volume) * 100));
 
-function setYouTubeStatus(message, tone = "") {
-  const element = $("#resolverState");
-  if (!element) return;
-  element.classList.remove("ok", "bad");
-  if (tone) element.classList.add(tone);
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  element.replaceChildren(dot, document.createTextNode(message));
-}
-
 function loadYouTubeIframeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   return new Promise((resolve, reject) => {
@@ -214,8 +212,6 @@ const ICONS = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-9.2A4.2 4.2 0 0 1 12 7a4.2 4.2 0 0 1 7 3.8C19 15.6 12 20 12 20z"/></svg>',
   heartFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20s-7-4.4-7-9.2A4.2 4.2 0 0 1 12 7a4.2 4.2 0 0 1 7 3.8C19 15.6 12 20 12 20z"/></svg>',
-  queue: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h11M4 12h11M4 18h7"/><path d="M19 10v8"/><circle cx="17" cy="19" r="2"/></svg>',
-  nextUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M4 12h9M4 18h5M17 8v8M17 8l3 2-3 2"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 4 5-4M5 21h14"/></svg>',
@@ -291,7 +287,7 @@ function registerList(key, tracks) {
 }
 
 function rowsHTML(tracks, listKey, options = {}) {
-  const { showIndex = true, showViews = true, showSimilar = false } = options;
+  const { showIndex = true, showViews = true, showSimilar = false, showPlayedAt = false } = options;
   return `<div class="track-list" data-list="${esc(listKey)}">
     ${tracks
       .map(
@@ -305,7 +301,7 @@ function rowsHTML(tracks, listKey, options = {}) {
         <img class="thumb" src="${esc(track.thumbnail)}" alt="" loading="lazy" decoding="async" />
         <div class="t-main">
           <div class="t-title">${esc(track.title)}</div>
-          <div class="t-artist">${esc(track.artist)}</div>
+          <div class="t-artist">${esc(track.artist)}${showPlayedAt && track.playedAt ? ` <span class="journal-time">· ${esc(new Date(track.playedAt).toLocaleString())}</span>` : ""}</div>
         </div>
         <div class="t-views">${showViews ? esc(track.views || "") : ""}</div>
         <div class="t-dur">${fmtTime(track.duration)}</div>
@@ -553,7 +549,7 @@ function renderSearchResults() {
     </div>
     <div class="section-head" style="margin-top:24px">
       <h2>Songs</h2>
-      <button class="more" data-play-all="results">Play all</button>
+      <button class="more" data-play-all="results">Start radio</button>
     </div>
     ${rowsHTML(tracks, "results", { showSimilar: true })}`;
   markPlaying();
@@ -623,7 +619,7 @@ function likedTracks() {
 function renderLibrary() {
   const liked = likedTracks();
   const playlists = store.playlists;
-  const recents = store.recents;
+  const journal = store.journal.slice(0, 200);
 
   view.innerHTML = `
     <div class="greeting">
@@ -635,7 +631,7 @@ function renderLibrary() {
     <section class="section">
       <div class="section-head">
         <div><h2>Liked songs</h2><p>${liked.length} ${liked.length === 1 ? "track" : "tracks"}</p></div>
-        ${liked.length ? '<button class="more" data-play-all="liked">Play all</button>' : ""}
+        ${liked.length ? '<button class="more" data-play-all="liked">Start radio</button>' : ""}
       </div>
       ${liked.length ? rowsHTML(registerAndReturn("liked", liked), "liked") : emptyState("No liked songs yet", "Tap the heart in the player bar while something is playing.")}
     </section>
@@ -675,10 +671,6 @@ function renderLibrary() {
               </div>
             </div>
           </div>
-          <label class="switch-row">
-            <span><b>Autoplay similar</b><em>Keep the queue going when it runs out</em></span>
-            <span class="switch"><input type="checkbox" id="autoplayToggle" ${taste.getAutoplay() ? "checked" : ""} /><i></i></span>
-          </label>
         </div>
       </section>`;
     })()}
@@ -705,9 +697,9 @@ function renderLibrary() {
       }
     </section>
 
-    <section class="section">
-      <div class="section-head"><div><h2>Recently played</h2><p>Last ${Math.min(recents.length, 30)} tracks</p></div></div>
-      ${recents.length ? rowsHTML(registerAndReturn("recents", recents), "recents", { showViews: false }) : emptyState("Nothing played yet", "Your listening history will show up here.")}
+    <section class="section" id="journalSection">
+      <div class="section-head"><div><h2>Listening journal</h2><p>${journal.length} individual plays · saved on this device</p></div></div>
+      ${journal.length ? rowsHTML(registerAndReturn("journal", journal), "journal", { showViews: false, showPlayedAt: true }) : emptyState("Your journal is empty", "Each song you play will be recorded here.")}
     </section>
   `;
 
@@ -753,7 +745,7 @@ function renderPlaylist(id) {
       </div>
     </div>
     <div class="section-head" style="margin-top:26px">
-      <button class="more" data-play-all="${esc(key)}">Play all</button>
+      <button class="more" data-play-all="${esc(key)}">Start radio</button>
       <button class="more" data-delete-playlist="${esc(playlist.id)}">Delete playlist</button>
     </div>
     ${playlist.tracks.length ? rowsHTML(playlist.tracks, key, { showViews: false }) : emptyState("Empty playlist", "Use a track's menu and choose “Add to playlist”.")}
@@ -782,80 +774,86 @@ function renderSidebarPlaylists() {
 /* ------------------------------ playback ------------------------------ */
 
 function findTrack(id) {
-  return state.registry.get(id) || state.queue.find((t) => t.id === id) || store.liked[id] || null;
+  return state.registry.get(id) || (state.current?.id === id ? state.current : null) || store.liked[id] || null;
 }
 
-function playFromList(list, index, options = {}) {
+function playFromList(list, index) {
   if (!list || !list.length) return;
   const i = Math.max(0, Math.min(index, list.length - 1));
-  radioMode = false;
-  smartSeed += 1; // cancel any pending smart queue
-  state.queue = list.slice();
-  state.index = i;
-  startTrack(state.queue[i]);
-  renderQueue();
-  if (options.smart) seedSmartQueue(state.queue[i], list, i);
-}
-
-/**
- * Discovery surfaces (shelves, search) continue into similar songs, while lists
- * the user built or saved (liked, history, playlists) keep their own order.
- */
-function isDiscoveryList(key) {
-  return !/^(liked|recents|playlist)/.test(key || "");
-}
-
-let smartSeed = 0;
-
-/**
- * After a track is picked from a discovery list, put songs from the same
- * related graph right after it (re-ranked by taste), then keep the rest of the
- * list as the tail. Mirrors how YouTube/Spotify continue a single pick.
- */
-async function seedSmartQueue(track, list, index) {
-  const seq = ++smartSeed;
-  radioMode = true;
-  try {
-    const data = await api(`/api/related?id=${encodeURIComponent(track.id)}&limit=26`);
-    if (seq !== smartSeed) return; // another track took over
-    if (state.current?.id !== track.id) return;
-    const ranked = taste.rank(data.tracks || [], { excludeIds: [track.id], seed: track, limit: 12 });
-    if (!ranked.length) return;
-    const rankedIds = new Set(ranked.map((t) => t.id));
-    const tail = list.slice(index + 1).filter((t) => t.id !== track.id && !rankedIds.has(t.id));
-    state.queue = [state.queue[state.index] || track, ...ranked, ...tail].filter(
-      (t, i, all) => all.findIndex((x) => x.id === t.id) === i,
-    );
-    state.index = 0;
-    renderQueue();
-  } catch {
-    /* keep the plain list order */
-  }
-}
-
-function addToQueue(track) {
-  state.queue.push(track);
-  if (state.index < 0) {
-    state.index = 0;
-    startTrack(state.queue[0]);
-  }
-  renderQueue();
-  toast("Added to queue", "ok");
-}
-
-function playNext(track) {
-  const insertAt = state.index + 1;
-  state.queue.splice(insertAt, 0, track);
-  if (state.index < 0) {
-    state.index = 0;
-    startTrack(state.queue[0]);
-  }
-  renderQueue();
-  toast("Playing next", "ok");
+  startTrack(list[i]);
 }
 
 let session = null;
-let radioMode = false;
+let recommendationToken = 0;
+let recommendationSeedId = null;
+let recommendationPromise = Promise.resolve(null);
+let advancing = false;
+let advanceToken = 0;
+
+function chooseRecommendation(candidates, seed) {
+  const seen = new Set();
+  const unique = candidates.filter((track) => {
+    if (!track?.id || track.id === seed.id || seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
+  if (!unique.length) return null;
+
+  const recentIds = [...new Set(store.journal.slice(0, 60).map((entry) => entry.id))];
+  const fresh = taste.rank(unique, { excludeIds: [...recentIds, seed.id], seed, limit: 40 });
+  const ranked = fresh.length ? fresh : taste.rank(unique, { excludeIds: [seed.id], seed, limit: 40 });
+  if (!ranked.length) return null;
+
+  const pool = store.shuffle ? ranked.slice(0, Math.min(5, ranked.length)) : ranked.slice(0, 1);
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function memoryTracks() {
+  return [
+    ...state.registry.values(),
+    ...store.recents,
+    ...Object.values(store.liked),
+    ...store.playlists.flatMap((playlist) => playlist.tracks || []),
+    ...store.journal,
+  ];
+}
+
+async function findNextRecommendation(seed) {
+  let candidates = [];
+  try {
+    const data = await api(`/api/related?id=${encodeURIComponent(seed.id)}&limit=30`);
+    candidates = Array.isArray(data.tracks) ? data.tracks : [];
+    const related = chooseRecommendation(candidates, seed);
+    if (related) return related;
+  } catch (error) {
+    console.error("[autoplay] Related lookup failed:", error);
+  }
+
+  const query = seed.artist && seed.artist !== "Unknown artist" ? `${seed.artist} songs` : seed.title;
+  if (query.trim().length >= 2) {
+    try {
+      const data = await api(`/api/search?q=${encodeURIComponent(query)}&limit=24`);
+      candidates = [...candidates, ...(Array.isArray(data.tracks) ? data.tracks : [])];
+      const searched = chooseRecommendation(candidates, seed);
+      if (searched) return searched;
+    } catch (error) {
+      console.error("[autoplay] Search fallback failed:", error);
+    }
+  }
+
+  return chooseRecommendation(memoryTracks(), seed);
+}
+
+function prepareNextRecommendation(seed) {
+  const token = ++recommendationToken;
+  recommendationSeedId = seed.id;
+  recommendationPromise = findNextRecommendation(seed)
+    .then((track) => (token === recommendationToken && state.current?.id === seed.id ? track : null))
+    .catch((error) => {
+      console.error("[autoplay] Recommendation preparation failed:", error);
+      return null;
+    });
+}
 
 function finalizeSession() {
   if (!session) return;
@@ -883,7 +881,6 @@ function handleYouTubePlayerState(event) {
       state.loading = false;
       $("#playBtn").classList.remove("loading");
       $("#youtubeError").hidden = true;
-      setYouTubeStatus("YouTube player connected", "ok");
       if (state.current && session?.track.id !== state.current.id) {
         taste.record("play", state.current);
         session = { track: state.current, startedAt: Date.now() };
@@ -926,7 +923,6 @@ function handleYouTubePlayerError(event) {
   $("#playBtn").classList.remove("loading");
   $("#youtubeError").textContent = messages[event.data] || "YouTube couldn't play this video.";
   $("#youtubeError").hidden = false;
-  setYouTubeStatus("YouTube playback unavailable", "bad");
   audio.dispatch("error");
 }
 
@@ -983,15 +979,19 @@ async function loadYouTubeTrack(track) {
   youtubePlayer.loadVideoById({ videoId: track.id });
 }
 
-async function startTrack(track) {
+async function startTrack(track, fromRecommendation = false) {
   if (!track) return;
-  if (state.current?.id !== track.id) finalizeSession();
+  if (!fromRecommendation) {
+    advanceToken += 1;
+    advancing = false;
+  }
+  if (session) finalizeSession();
   state.current = track;
   state.loading = true;
   audio._playing = false;
+  prepareNextRecommendation(track);
   $("#youtubeStage").hidden = false;
   $("#youtubeError").hidden = true;
-  setYouTubeStatus("Connecting to YouTube player");
   if (lyricsOpen()) loadLyrics();
 
   $("#playBtn").classList.add("loading");
@@ -1000,9 +1000,9 @@ async function startTrack(track) {
 
   clearTimeout(state.startWatchdog);
   state.startWatchdog = setTimeout(() => {
-    if (state.current?.id !== track.id || !audio.paused) return;
+    if (state.current?.id !== track.id || !state.loading || !audio.paused) return;
     toast("This track isn't loading. Skipping.", "err");
-    if (state.queue.length > 1) nextTrack(true);
+    nextTrack(true, true);
   }, 40_000);
 
   try {
@@ -1012,129 +1012,68 @@ async function startTrack(track) {
     clearTimeout(state.startWatchdog);
     $("#youtubeError").textContent = error instanceof Error ? error.message : "Couldn't load YouTube's player.";
     $("#youtubeError").hidden = false;
-    setYouTubeStatus("YouTube player unavailable", "bad");
     toast(error instanceof Error ? error.message : "Couldn't play this track.", "err");
     $("#playBtn").classList.remove("loading");
     state.loading = false;
     audio._playing = false;
+    nextTrack(true, true);
   }
 }
 
 function rememberRecent(track) {
   if (!track) return;
+  const playedAt = Date.now();
+  store.journal = [{ ...track, playedAt }, ...store.journal].slice(0, 500);
   store.recents = [track, ...store.recents.filter((t) => t.id !== track.id)].slice(0, 40);
   saveStore();
 }
 
-async function nextTrack(auto = false) {
-  if (!state.queue.length) return;
+async function nextTrack(auto = false, skipRepeat = false) {
+  const seed = state.current;
+  if (!seed || advancing) return;
 
-  if (store.repeat === "one" && auto) {
+  if (store.repeat === "one" && auto && !skipRepeat) {
     audio.currentTime = 0;
     audio.play().catch(() => {});
     return;
   }
 
-  if (store.shuffle && state.queue.length > 1) {
-    let i = state.index;
-    while (i === state.index) i = Math.floor(Math.random() * state.queue.length);
-    state.index = i;
-    startTrack(state.queue[i]);
-    renderQueue();
-    return;
-  }
-
-  if (state.index + 1 >= state.queue.length) {
-    if (store.repeat === "all" && auto) {
-      state.index = 0;
-      startTrack(state.queue[0]);
-      renderQueue();
+  advancing = true;
+  const requestId = ++advanceToken;
+  try {
+    if (recommendationSeedId !== seed.id) prepareNextRecommendation(seed);
+    const requestToken = recommendationToken;
+    const next = await recommendationPromise;
+    if (state.current?.id !== seed.id || recommendationToken !== requestToken || advanceToken !== requestId) return;
+    if (!next) {
+      toast("No new recommendation found. Try Next again.", "err");
       return;
     }
-    if (auto && (radioMode || taste.getAutoplay())) {
-      const extended = await extendQueue();
-      if (extended) {
-        state.index += 1;
-        startTrack(state.queue[state.index]);
-        renderQueue();
-        return;
-      }
-    }
-    if (!auto) toast("End of queue");
-    return;
-  }
-
-  state.index += 1;
-  startTrack(state.queue[state.index]);
-  renderQueue();
-}
-
-async function extendQueue() {
-  const last = state.queue[state.queue.length - 1];
-  if (!last) return false;
-  try {
-    const data = await api(`/api/related?id=${encodeURIComponent(last.id)}&limit=24`);
-    const existing = new Set(state.queue.map((t) => t.id));
-    const fresh = taste.rank(data.tracks, { excludeIds: [...existing], seed: last, limit: 12 });
-    if (!fresh.length) return false;
-    state.queue.push(...fresh);
-    renderQueue();
-    return true;
-  } catch {
-    return false;
+    await startTrack(next, true);
+  } finally {
+    if (advanceToken === requestId) advancing = false;
   }
 }
 
-async function startRadio(seed) {
+function startRadio(seed) {
   if (!seed) return;
   closePopover();
   toast(`Radio · ${seed.artist}`, "ok");
-
-  let candidates = [];
-  try {
-    const data = await api(`/api/related?id=${encodeURIComponent(seed.id)}&limit=26`);
-    candidates = data.tracks || [];
-  } catch {
-    /* seed-only radio */
-  }
-
-  const ranked = taste.rank(candidates, { excludeIds: [seed.id], seed, limit: 24 });
-  const queue = [seed, ...ranked];
-  if (queue.length === 1) {
-    candidates = [];
-    try {
-      const data = await api(`/api/search?q=${encodeURIComponent(seed.artist + " songs")}&limit=14`);
-      queue.push(...taste.rank(data.tracks || [], { excludeIds: [seed.id], seed, limit: 12 }));
-    } catch {
-      /* give up quietly */
-    }
-  }
-
-  playFromList(queue, 0);
-  radioMode = true;
-  if (queue.length < 2) toast("No similar tracks found for this one", "err");
+  startTrack(seed);
 }
 
 function prevTrack() {
-  if (!state.queue.length) return;
   if (audio.currentTime > 4) {
     audio.currentTime = 0;
     return;
   }
-  if (state.index === 0) {
-    audio.currentTime = 0;
-    return;
-  }
-  state.index -= 1;
-  startTrack(state.queue[state.index]);
-  renderQueue();
+  const previous = store.journal.find((entry) => entry.id !== state.current?.id);
+  if (previous) startTrack(previous);
+  else audio.currentTime = 0;
 }
 
 function togglePlay() {
-  if (!state.current) {
-    if (state.queue.length) startTrack(state.queue[Math.max(0, state.index)]);
-    return;
-  }
+  if (!state.current) return;
   if (audio.paused) audio.play().catch(() => {});
   else audio.pause();
 }
@@ -1169,8 +1108,6 @@ function renderNow() {
     title.textContent = "Nothing playing";
     artist.textContent = "Pick something to start";
     $("#likeBtn").classList.remove("liked");
-    $("#streamBadge").textContent = "—";
-    $("#streamBadge").classList.remove("hifi");
     return;
   }
 
@@ -1185,9 +1122,6 @@ function renderNow() {
   const liked = Boolean(store.liked[track.id]);
   $("#likeBtn").classList.toggle("liked", liked);
   $("#likeBtn").innerHTML = liked ? icon("heartFill") : icon("heart");
-
-  $("#streamBadge").textContent = "YouTube";
-  $("#streamBadge").classList.remove("hifi");
 
   updateMediaSession(track);
 }
@@ -1292,7 +1226,7 @@ audio.addEventListener("error", () => {
   if (!track) return;
 
   toast("Couldn't play this track. Skipping.", "err");
-  if (state.queue.length > 1) nextTrack(true);
+  nextTrack(true, true);
 });
 
 /* ------------------------------ controls ------------------------------ */
@@ -1301,6 +1235,10 @@ $("#playBtn").addEventListener("click", togglePlay);
 $("#nextBtn").addEventListener("click", () => nextTrack(false));
 $("#prevBtn").addEventListener("click", prevTrack);
 $("#likeBtn").addEventListener("click", () => toggleLike());
+$("#journalBtn").addEventListener("click", () => {
+  setView("library");
+  requestAnimationFrame(() => $("#journalSection")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+});
 
 $("#shuffleBtn").addEventListener("click", () => {
   store.shuffle = !store.shuffle;
@@ -1310,15 +1248,12 @@ $("#shuffleBtn").addEventListener("click", () => {
 });
 
 $("#repeatBtn").addEventListener("click", () => {
-  store.repeat = store.repeat === "off" ? "all" : store.repeat === "all" ? "one" : "off";
+  store.repeat = store.repeat === "off" ? "one" : "off";
   saveStore();
   $("#repeatBtn").classList.toggle("active", store.repeat !== "off");
   $("#repeatBtn").classList.toggle("one-mode", store.repeat === "one");
-  $("#repeatBtn").setAttribute(
-    "aria-label",
-    store.repeat === "off" ? "Repeat off" : store.repeat === "all" ? "Repeat all" : "Repeat one",
-  );
-  toast(store.repeat === "off" ? "Repeat off" : store.repeat === "all" ? "Repeat queue" : "Repeat this track");
+  $("#repeatBtn").setAttribute("aria-label", store.repeat === "off" ? "Repeat off" : "Repeat this track");
+  toast(store.repeat === "off" ? "Repeat off" : "Repeat this track");
 });
 
 $("#seek").addEventListener("input", (event) => {
@@ -1359,16 +1294,6 @@ function updateVolIcon() {
   $("#volIcon")?.remove();
   volInput.value = String(Math.round((store.muted ? 0 : store.volume) * 100));
 }
-
-/* ------------------------------ queue drawer ------------------------------ */
-
-function openQueue(open) {
-  $("#queuePanel").classList.toggle("open", open);
-  $("#queuePanel").setAttribute("aria-hidden", open ? "false" : "true");
-}
-
-$("#queueBtn").addEventListener("click", () => openQueue(!$("#queuePanel").classList.contains("open")));
-$("#closeQueue").addEventListener("click", () => openQueue(false));
 
 /* ------------------------------ lyrics ------------------------------ */
 
@@ -1430,7 +1355,6 @@ function openLyrics(open) {
   document.body.classList.toggle("stage-open", open);
   $("#lyricsBtn").classList.toggle("active", open);
   if (open) {
-    openQueue(false);
     loadLyrics();
     startLyricLoop();
     syncStageModes();
@@ -1678,42 +1602,6 @@ lyricsBody.addEventListener("click", (event) => {
   audio.currentTime = Math.max(0, target.t);
   if (audio.paused) audio.play().catch(() => {});
 });
-$("#clearQueue").addEventListener("click", () => {
-  if (!state.queue.length) return;
-  const current = state.current;
-  state.queue = current ? [current] : [];
-  state.index = current ? 0 : -1;
-  renderQueue();
-  toast("Queue cleared");
-});
-
-function renderQueue() {
-  const body = $("#queueBody");
-  const count = state.queue.length;
-  $("#queueMeta").textContent = count ? `${count} track${count === 1 ? "" : "s"} · ${Math.max(0, count - state.index - 1)} up next` : "Nothing queued";
-
-  if (!count) {
-    body.innerHTML = `<p class="pl-empty" style="padding:16px 10px">Your queue is empty. Play a track or use a track's menu to add one.</p>`;
-    return;
-  }
-
-  body.innerHTML = state.queue
-    .map(
-      (track, i) => `<div class="qrow ${i === state.index ? "current" : ""}" data-queue-index="${i}" data-track-id="${esc(track.id)}">
-        <span class="q-i">${i === state.index ? "▶" : i + 1}</span>
-        <img src="${esc(track.thumbnail)}" alt="" loading="lazy" />
-        <div style="min-width:0">
-          <div class="q-t">${esc(track.title)}</div>
-          <div class="q-a">${esc(track.artist)}</div>
-        </div>
-        <button class="icon-btn sm q-x" data-queue-remove="${i}" aria-label="Remove">${icon("close")}</button>
-      </div>`,
-    )
-    .join("");
-
-  markPlaying();
-}
-
 /* ------------------------------ popover / menu ------------------------------ */
 
 const popover = $("#popover");
@@ -1747,7 +1635,6 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closePopover();
     closeModal();
-    openQueue(false);
     openLyrics(false);
   }
 });
@@ -1764,9 +1651,7 @@ function openTrackMenu(track, rect) {
   openPopover(
     rect,
     `<button class="pop-item" data-menu-action="like" data-track="${esc(track.id)}">${liked ? icon("heartFill") : icon("heart")}${liked ? "Remove from liked" : "Add to liked songs"}</button>
-     <button class="pop-item" data-menu-action="next" data-track="${esc(track.id)}">${icon("nextUp")}Play next</button>
-     <button class="pop-item" data-menu-action="queue" data-track="${esc(track.id)}">${icon("queue")}Add to queue</button>
-     <button class="pop-item" data-menu-action="radio" data-track="${esc(track.id)}">${icon("radio")}Start radio</button>
+     <button class="pop-item" data-menu-action="radio" data-track="${esc(track.id)}">${icon("radio")}Start recommendations from here</button>
      <div class="pop-sep"></div>
      <div class="pop-label">Add to playlist</div>
      ${playlists || '<div class="pop-item" style="color:#7d828a">No playlists yet</div>'}
@@ -1802,8 +1687,6 @@ popover.addEventListener("click", (event) => {
   const action = btn.dataset.menuAction;
   const track = findTrack(btn.dataset.track);
   if (action === "like") toggleLike(track);
-  else if (action === "next") playNext(track);
-  else if (action === "queue") addToQueue(track);
   else if (action === "radio") startRadio(track);
   else if (action === "dislike") {
     taste.dislike(track);
@@ -1947,17 +1830,10 @@ view.addEventListener("click", (event) => {
     const list = listKey ? state.lists.get(listKey) : null;
     const track = findTrack(row.dataset.trackId);
     if (list && track) {
-      playFromList(list, list.findIndex((t) => t.id === track.id), { smart: isDiscoveryList(listKey || "") });
+      playFromList(list, list.findIndex((t) => t.id === track.id));
     } else if (track) {
-      playFromList([track], 0, { smart: true });
+      playFromList([track], 0);
     }
-  }
-});
-
-view.addEventListener("change", (event) => {
-  if (event.target && event.target.id === "autoplayToggle") {
-    taste.setAutoplay(event.target.checked);
-    toast(event.target.checked ? "Autoplay on" : "Autoplay off");
   }
 });
 
@@ -1969,38 +1845,7 @@ view.addEventListener("keydown", (event) => {
   row.click();
 });
 
-/* ------------------------------ delegation: queue / sidebar ------------------------------ */
-
-$("#queueBody").addEventListener("click", (event) => {
-  const remove = event.target.closest("[data-queue-remove]");
-  if (remove) {
-    event.stopPropagation();
-    const index = Number(remove.dataset.queueRemove);
-    const wasCurrent = index === state.index;
-    state.queue.splice(index, 1);
-    if (index < state.index) state.index -= 1;
-    if (wasCurrent) {
-      state.index = Math.min(state.index, state.queue.length - 1);
-      if (state.index >= 0) startTrack(state.queue[state.index]);
-      else {
-        state.current = null;
-        audio.pause();
-        renderNow();
-        markPlaying();
-      }
-    }
-    renderQueue();
-    return;
-  }
-
-  const row = event.target.closest("[data-queue-index]");
-  if (row) {
-    const index = Number(row.dataset.queueIndex);
-    state.index = index;
-    startTrack(state.queue[index]);
-    renderQueue();
-  }
-});
+/* ------------------------------ delegation: sidebar ------------------------------ */
 
 $("#playlistList").addEventListener("click", (event) => {
   const item = event.target.closest("[data-playlist]");
@@ -2151,11 +1996,7 @@ if ("serviceWorker" in navigator) {
     });
   });
 }
-renderQueue();
-
-youtubeApiReady
-  .then(() => setYouTubeStatus("YouTube player ready", "ok"))
-  .catch(() => setYouTubeStatus("YouTube player unavailable", "bad"));
+youtubeApiReady.catch((error) => console.error("[youtube] Player API unavailable:", error));
 
 setInterval(() => {
   if (youtubePlayerReady && state.current) audio.dispatch("timeupdate");

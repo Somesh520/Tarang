@@ -53,17 +53,6 @@
     </div>
     <div class="playlist-list" id="playlistList"></div>
 
-    <div class="side-foot">
-      <a class="launch-link" href="/launch" target="_blank" rel="noopener">
-        <span class="spark"></span>
-        <span>
-          <b>Launch page</b>
-          <em>Founding access · 12.12.26</em>
-        </span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M7 17 17 7M9 7h8v8"/></svg>
-      </a>
-      <div class="resolver" id="resolverState"><span class="dot"></span> loading YouTube player…</div>
-    </div>
   </aside>
 
   <!-- ================= MAIN ================= -->
@@ -84,7 +73,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>
           <span>Install</span>
         </button>
-        <div class="avatar" title="Local profile">T</div>
       </div>
     </header>
 
@@ -151,7 +139,6 @@
     </div>
 
     <div class="player-right">
-      <div class="stream-badge" id="streamBadge" title="What's actually playing">—</div>
       <button class="icon-btn" id="volBtn" title="Mute" aria-label="Mute">
         <svg id="volIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>
       </button>
@@ -159,29 +146,12 @@
       <button class="icon-btn" id="lyricsBtn" title="Lyrics" aria-label="Lyrics">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg>
       </button>
-      <button class="icon-btn" id="queueBtn" title="Queue" aria-label="Queue">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h11M4 12h11M4 18h7M19 12v7M19 12l3-1"/><circle cx="17" cy="19" r="2"/></svg>
+      <button class="icon-btn" id="journalBtn" title="Listening journal" aria-label="Listening journal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
       </button>
     </div>
   </footer>
 </div>
-
-<!-- ================= QUEUE DRAWER ================= -->
-<aside class="queue-panel" id="queuePanel" aria-hidden="true">
-  <div class="queue-head">
-    <div>
-      <h3>Queue</h3>
-      <p id="queueMeta">Nothing queued</p>
-    </div>
-    <div class="queue-head-actions">
-      <button class="btn-ghost sm" id="clearQueue">Clear</button>
-      <button class="icon-btn" id="closeQueue" aria-label="Close queue">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-    </div>
-  </div>
-  <div class="queue-body" id="queueBody"></div>
-</aside>
 
 <!-- ================= NOW PLAYING · LYRICS STAGE ================= -->
 <section class="stage" id="lyricsPanel" aria-hidden="true">
