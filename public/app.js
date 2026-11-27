@@ -59,63 +59,101 @@ let youtubePlayer = null;
 let youtubePlayerReady = false;
 let youtubePlayerReadyPromise = null;
 
+/**
+ * Playback is audio-only. The server resolves the best audio format the source
+ * exposes and we stream it into a plain <audio> element — no video surface, no
+ * "the owner doesn't allow playback here" embed blocks, and a native clock that
+ * keeps lyric timing honest.
+ *
+ * The embedded YouTube player stays attached only as a last-resort fallback for
+ * the rare track our resolver can't serve.
+ */
+const audioEl = document.createElement("audio");
+audioEl.preload = "auto";
+audioEl.setAttribute("playsinline", "");
+document.body.append(audioEl);
+
 const audio = {
-  player: null,
+  el: audioEl,
+  yt: null,
   _volume: store.volume,
   _muted: store.muted,
   _playing: false,
   addEventListener(type, callback) {
-    const listeners = audioListeners.get(type) || new Set();
-    listeners.add(callback);
-    audioListeners.set(type, listeners);
+    audioEl.addEventListener(type, callback);
   },
   dispatch(type) {
-    for (const callback of audioListeners.get(type) || []) callback({ type, target: this });
+    audioEl.dispatchEvent(new Event(type));
   },
   attach(player) {
-    this.player = player;
+    this.yt = player;
     this.volume = this._volume;
     this.muted = this._muted;
   },
   get currentTime() {
-    const value = Number(this.player?.getCurrentTime?.());
-    return Number.isFinite(value) ? value : 0;
+    if (this.yt) {
+      const value = Number(this.yt.getCurrentTime?.());
+      return Number.isFinite(value) ? value : 0;
+    }
+    return audioEl.currentTime || 0;
   },
   set currentTime(value) {
-    if (!this.player || !Number.isFinite(value)) return;
-    this.player.seekTo(Math.max(0, value), true);
-    queueMicrotask(() => this.dispatch("seeked"));
+    if (!Number.isFinite(value)) return;
+    if (this.yt) {
+      this.yt.seekTo(Math.max(0, value), true);
+      queueMicrotask(() => this.dispatch("seeked"));
+      return;
+    }
+    audioEl.currentTime = Math.max(0, value);
   },
   get duration() {
-    const value = Number(this.player?.getDuration?.());
+    const value = this.yt ? Number(this.yt.getDuration?.()) : audioEl.duration;
     return Number.isFinite(value) && value > 0 ? value : NaN;
   },
   get paused() {
-    return !this._playing;
+    return this.yt ? !this._playing : audioEl.paused;
   },
   get volume() {
     return this._volume;
   },
   set volume(value) {
     this._volume = Math.min(1, Math.max(0, Number(value) || 0));
-    if (this.player && !this._muted) this.player.setVolume(Math.round(this._volume * 100));
+    audioEl.volume = this._muted ? 0 : this._volume;
+    if (this.yt && !this._muted) this.yt.setVolume(Math.round(this._volume * 100));
   },
   get muted() {
     return this._muted;
   },
   set muted(value) {
     this._muted = Boolean(value);
-    if (this.player) this._muted ? this.player.mute() : this.player.unMute();
+    audioEl.muted = this._muted;
+    if (this.yt) this._muted ? this.yt.mute() : this.yt.unMute();
   },
   get buffered() {
-    return { length: 0 };
+    return audioEl.buffered;
+  },
+  get src() {
+    return audioEl.currentSrc || audioEl.src;
+  },
+  set src(value) {
+    audioEl.src = value;
+  },
+  load() {
+    audioEl.load();
   },
   play() {
-    this.player?.playVideo();
-    return Promise.resolve();
+    if (this.yt) {
+      this.yt.playVideo();
+      return Promise.resolve();
+    }
+    return audioEl.play();
   },
   pause() {
-    this.player?.pauseVideo();
+    if (this.yt) {
+      this.yt.pauseVideo();
+      return;
+    }
+    audioEl.pause();
   },
 };
 
@@ -892,19 +930,40 @@ async function startTrack(track, options = {}) {
   const sameTrack = state.current?.id === track.id;
   if (!sameTrack && !options.keepSession) finalizeSession();
   state.current = track;
+  state.streamInfo = null;
   state.loading = true;
+  state.embedded = false;
+  if (!options.keepFallback) state.fallbackTried = false;
+  audio.yt = null;
   audio._playing = false;
-  $("#youtubeStage").hidden = false;
+  $("#youtubeStage").hidden = true;
   $("#youtubeError").hidden = true;
-  setYouTubeStatus("Loading YouTube player…");
+  setYouTubeStatus("Streaming audio", "ok");
   if (lyricsOpen()) loadLyrics();
 
   $("#playBtn").classList.add("loading");
   renderNow();
   markPlaying();
 
+  // Audio first: resolve + stream straight into the page's <audio> element.
+  audio.src = `/api/stream?id=${encodeURIComponent(track.id)}&quality=${store.quality}`;
+  audio.load();
+  const starting = audio.play().catch((err) => {
+    if (err && (err.name === "AbortError" || err.name === "NotAllowedError")) return;
+    useEmbeddedPlayer(track);
+  });
+
+  // Metadata only decorates the UI; playback never waits on it.
+  api(`/api/track?id=${encodeURIComponent(track.id)}&quality=${store.quality}`)
+    .then((data) => {
+      if (state.current?.id !== track.id) return;
+      state.streamInfo = data.quality || null;
+      renderNow();
+    })
+    .catch(() => {});
+
   try {
-    await loadYouTubeTrack(track);
+    await starting;
 
     if (!sameTrack) {
       taste.record("play", state.current);
@@ -913,8 +972,25 @@ async function startTrack(track, options = {}) {
 
     rememberRecent(state.current);
     renderNow();
+    warmNext();
   } catch (err) {
-    toast(err instanceof Error ? err.message : "Couldn't load the YouTube player.", "err");
+    $("#playBtn").classList.remove("loading");
+    state.loading = false;
+  }
+}
+
+/** Last resort: the embedded YouTube player, only when our resolver can't serve the audio. */
+async function useEmbeddedPlayer(track) {
+  if (!track || state.embedded) return;
+  state.embedded = true;
+  audio.pause();
+  $("#youtubeStage").hidden = false;
+  $("#youtubeError").hidden = true;
+  setYouTubeStatus("Falling back to the YouTube player");
+  try {
+    await loadYouTubeTrack(track);
+  } catch (err) {
+    toast(err instanceof Error ? err.message : "Couldn't play this track.", "err");
     $("#playBtn").classList.remove("loading");
     state.loading = false;
   }
@@ -1168,7 +1244,26 @@ audio.addEventListener("ended", () => {
 
 audio.addEventListener("error", () => {
   $("#playBtn").classList.remove("loading");
-  if (state.current) toast("YouTube couldn't play this video in the embedded player.", "err");
+  state.loading = false;
+  const track = state.current;
+  if (!track) return;
+
+  // The embedded player is the last resort, so a failure there means skip.
+  if (audio.yt) {
+    toast("Couldn't play this track. Skipping.", "err");
+    if (state.queue.length > 1) nextTrack(true);
+    return;
+  }
+
+  if (!state.fallbackTried && store.quality !== "aac") {
+    state.fallbackTried = true;
+    store.quality = "aac";
+    saveStore();
+    startTrack(track, { keepSession: true, keepFallback: true });
+    return;
+  }
+
+  useEmbeddedPlayer(track);
 });
 
 /* ------------------------------ controls ------------------------------ */
@@ -1279,7 +1374,10 @@ function wordTimings(line, nextStart) {
   const total = weights.reduce((sum, value) => sum + value, 0) || 1;
   const sung = Math.max(0.9, total * 0.34);
   const gap = nextStart && nextStart > line.t ? nextStart - line.t : 0;
-  const span = gap > 0 ? Math.min(gap - 0.08, sung * 1.15) : sung;
+  // A line is sung across most of the gap before the next one. Spreading words
+  // over a short "sung" estimate lit the last word seconds early, which reads as
+  // drift; follow the line's real span and cap it so instrumental gaps stay sane.
+  const span = gap > 0 ? Math.max(0.8, Math.min(gap - 0.25, Math.max(sung, gap * 0.8))) : sung;
 
   let cursor = line.t;
   return words.map((text, i) => {

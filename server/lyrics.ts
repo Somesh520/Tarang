@@ -229,6 +229,10 @@ function score(entry: any, title: string, duration: number): number {
 
   // Lyrics must come from the same cut, otherwise every timestamp is offset.
   const delta = duration && entry.duration ? Math.abs(entry.duration - duration) : 0;
+  // Timed lyrics for a different runtime are wrong for the entire song, so drop
+  // them rather than show a karaoke that drifts a little more with every line.
+  // Plain lyrics from that entry can still be used.
+  if (entry.syncedLyrics && duration && entry.duration && delta > 8) return -100;
   // A vague title plus a very different runtime is almost always another song.
   if (!sameTitle && delta > 12) return -100;
   // Even an exact title that far off is usually a different edit or a preview.
