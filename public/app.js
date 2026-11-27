@@ -59,31 +59,18 @@ let youtubePlayer = null;
 let youtubePlayerReady = false;
 let youtubePlayerReadyPromise = null;
 
-/**
- * Playback is audio-only. The server resolves the best audio format the source
- * exposes and we stream it into a plain <audio> element — no video surface, no
- * "the owner doesn't allow playback here" embed blocks, and a native clock that
- * keeps lyric timing honest.
- *
- * The embedded YouTube player stays attached only as a last-resort fallback for
- * the rare track our resolver can't serve.
- */
-const audioEl = document.createElement("audio");
-audioEl.preload = "auto";
-audioEl.setAttribute("playsinline", "");
-document.body.append(audioEl);
+const audioEvents = new EventTarget();
 
 const audio = {
-  el: audioEl,
   yt: null,
   _volume: store.volume,
   _muted: store.muted,
   _playing: false,
   addEventListener(type, callback) {
-    audioEl.addEventListener(type, callback);
+    audioEvents.addEventListener(type, callback);
   },
   dispatch(type) {
-    audioEl.dispatchEvent(new Event(type));
+    audioEvents.dispatchEvent(new Event(type));
   },
   attach(player) {
     this.yt = player;
@@ -91,34 +78,26 @@ const audio = {
     this.muted = this._muted;
   },
   get currentTime() {
-    if (this.yt) {
-      const value = Number(this.yt.getCurrentTime?.());
-      return Number.isFinite(value) ? value : 0;
-    }
-    return audioEl.currentTime || 0;
+    const value = Number(this.yt?.getCurrentTime?.());
+    return Number.isFinite(value) ? value : 0;
   },
   set currentTime(value) {
-    if (!Number.isFinite(value)) return;
-    if (this.yt) {
-      this.yt.seekTo(Math.max(0, value), true);
-      queueMicrotask(() => this.dispatch("seeked"));
-      return;
-    }
-    audioEl.currentTime = Math.max(0, value);
+    if (!Number.isFinite(value) || !this.yt) return;
+    this.yt.seekTo(Math.max(0, value), true);
+    queueMicrotask(() => this.dispatch("seeked"));
   },
   get duration() {
-    const value = this.yt ? Number(this.yt.getDuration?.()) : audioEl.duration;
+    const value = Number(this.yt?.getDuration?.());
     return Number.isFinite(value) && value > 0 ? value : NaN;
   },
   get paused() {
-    return this.yt ? !this._playing : audioEl.paused;
+    return !this._playing;
   },
   get volume() {
     return this._volume;
   },
   set volume(value) {
     this._volume = Math.min(1, Math.max(0, Number(value) || 0));
-    audioEl.volume = this._muted ? 0 : this._volume;
     if (this.yt && !this._muted) this.yt.setVolume(Math.round(this._volume * 100));
   },
   get muted() {
@@ -126,34 +105,15 @@ const audio = {
   },
   set muted(value) {
     this._muted = Boolean(value);
-    audioEl.muted = this._muted;
     if (this.yt) this._muted ? this.yt.mute() : this.yt.unMute();
   },
-  get buffered() {
-    return audioEl.buffered;
-  },
-  get src() {
-    return audioEl.currentSrc || audioEl.src;
-  },
-  set src(value) {
-    audioEl.src = value;
-  },
-  load() {
-    audioEl.load();
-  },
   play() {
-    if (this.yt) {
-      this.yt.playVideo();
-      return Promise.resolve();
-    }
-    return audioEl.play();
+    if (!this.yt) return Promise.reject(new Error("YouTube player is not ready."));
+    this.yt.playVideo();
+    return Promise.resolve();
   },
   pause() {
-    if (this.yt) {
-      this.yt.pauseVideo();
-      return;
-    }
-    audioEl.pause();
+    this.yt?.pauseVideo();
   },
 };
 
@@ -834,6 +794,12 @@ function handleYouTubePlayerState(event) {
       $("#playBtn").classList.remove("loading");
       $("#youtubeError").hidden = true;
       setYouTubeStatus("YouTube player connected", "ok");
+      if (state.current && session?.track.id !== state.current.id) {
+        taste.record("play", state.current);
+        session = { track: state.current, startedAt: Date.now() };
+        rememberRecent(state.current);
+        renderNow();
+      }
       audio.dispatch("loadedmetadata");
       audio.dispatch("play");
       audio.dispatch("playing");
@@ -925,35 +891,21 @@ async function loadYouTubeTrack(track) {
   youtubePlayer.loadVideoById({ videoId: track.id });
 }
 
-async function startTrack(track, options = {}) {
+async function startTrack(track) {
   if (!track) return;
-  const sameTrack = state.current?.id === track.id;
-  if (!sameTrack && !options.keepSession) finalizeSession();
+  if (state.current?.id !== track.id) finalizeSession();
   state.current = track;
-  state.streamInfo = null;
   state.loading = true;
-  state.embedded = false;
-  if (!options.keepFallback) state.fallbackTried = false;
-  audio.yt = null;
   audio._playing = false;
-  $("#youtubeStage").hidden = true;
+  $("#youtubeStage").hidden = false;
   $("#youtubeError").hidden = true;
-  setYouTubeStatus("Streaming audio", "ok");
+  setYouTubeStatus("Connecting to YouTube player");
   if (lyricsOpen()) loadLyrics();
 
   $("#playBtn").classList.add("loading");
   renderNow();
   markPlaying();
 
-  // Audio first: resolve + stream straight into the page's <audio> element.
-  audio.src = `/api/stream?id=${encodeURIComponent(track.id)}&quality=${store.quality}`;
-  audio.load();
-  const starting = audio.play().catch((err) => {
-    if (err && (err.name === "AbortError" || err.name === "NotAllowedError")) return;
-    useEmbeddedPlayer(track);
-  });
-
-  // Don't leave the player spinning forever when a source never delivers audio.
   clearTimeout(state.startWatchdog);
   state.startWatchdog = setTimeout(() => {
     if (state.current?.id !== track.id || !audio.paused) return;
@@ -961,46 +913,18 @@ async function startTrack(track, options = {}) {
     if (state.queue.length > 1) nextTrack(true);
   }, 40_000);
 
-  // Metadata only decorates the UI; playback never waits on it.
-  api(`/api/track?id=${encodeURIComponent(track.id)}&quality=${store.quality}`)
-    .then((data) => {
-      if (state.current?.id !== track.id) return;
-      state.streamInfo = data.quality || null;
-      renderNow();
-    })
-    .catch(() => {});
-
-  try {
-    await starting;
-
-    if (!sameTrack) {
-      taste.record("play", state.current);
-      session = { track: state.current, startedAt: Date.now() };
-    }
-
-    rememberRecent(state.current);
-    renderNow();
-    warmNext();
-  } catch (err) {
-    $("#playBtn").classList.remove("loading");
-    state.loading = false;
-  }
-}
-
-/** Last resort: the embedded YouTube player, only when our resolver can't serve the audio. */
-async function useEmbeddedPlayer(track) {
-  if (!track || state.embedded) return;
-  state.embedded = true;
-  audio.pause();
-  $("#youtubeStage").hidden = false;
-  $("#youtubeError").hidden = true;
-  setYouTubeStatus("Falling back to the YouTube player");
   try {
     await loadYouTubeTrack(track);
-  } catch (err) {
-    toast(err instanceof Error ? err.message : "Couldn't play this track.", "err");
+  } catch (error) {
+    if (state.current?.id !== track.id) return;
+    clearTimeout(state.startWatchdog);
+    $("#youtubeError").textContent = error instanceof Error ? error.message : "Couldn't load YouTube's player.";
+    $("#youtubeError").hidden = false;
+    setYouTubeStatus("YouTube player unavailable", "bad");
+    toast(error instanceof Error ? error.message : "Couldn't play this track.", "err");
     $("#playBtn").classList.remove("loading");
     state.loading = false;
+    audio._playing = false;
   }
 }
 
@@ -1259,22 +1183,8 @@ audio.addEventListener("error", () => {
   const track = state.current;
   if (!track) return;
 
-  // The embedded player is the last resort, so a failure there means skip.
-  if (audio.yt) {
-    toast("Couldn't play this track. Skipping.", "err");
-    if (state.queue.length > 1) nextTrack(true);
-    return;
-  }
-
-  if (!state.fallbackTried && store.quality !== "aac") {
-    state.fallbackTried = true;
-    store.quality = "aac";
-    saveStore();
-    startTrack(track, { keepSession: true, keepFallback: true });
-    return;
-  }
-
-  useEmbeddedPlayer(track);
+  toast("Couldn't play this track. Skipping.", "err");
+  if (state.queue.length > 1) nextTrack(true);
 });
 
 /* ------------------------------ controls ------------------------------ */
