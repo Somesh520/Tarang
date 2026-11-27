@@ -192,6 +192,7 @@ function dedupe(tracks: Track[]): Track[] {
 const searchCache = new TtlCache<Track[]>(400);
 const SEARCH_TTL = 6 * 60 * 60 * 1000; // 6 hours
 const searchInflight = new Map<string, Promise<Track[]>>();
+const relatedSearchInflight = new Map<string, Promise<Track[]>>();
 
 async function musicSearch(query: string, limit: number): Promise<Track[]> {
   const data = await music("search", {
@@ -211,6 +212,26 @@ async function musicSearch(query: string, limit: number): Promise<Track[]> {
   })(data);
 
   return dedupe(items.map(musicItemToTrack).filter((t): t is Track => t !== null)).slice(0, limit);
+}
+
+async function relatedCatalogueSearch(query: string): Promise<Track[]> {
+  const normalized = query.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return [];
+
+  const cacheKey = `${normalized}:32`;
+  const cached = searchCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = relatedSearchInflight.get(normalized);
+  if (pending) return pending;
+
+  const task = musicSearch(query, 32);
+  relatedSearchInflight.set(normalized, task);
+  try {
+    return await task;
+  } finally {
+    relatedSearchInflight.delete(normalized);
+  }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -346,6 +367,7 @@ export async function searchTracks(query: string, limit = 24): Promise<Track[]> 
 
 const relatedCache = new TtlCache<Track[]>(300);
 const RELATED_TTL = 3 * 60 * 60 * 1000;
+const relatedInflight = new Map<string, Promise<Track[]>>();
 
 /** Newer WEB responses use lockupViewModel; older clients still return compactVideoRenderer. */
 function lockupToTrack(item: any): Track | null {
@@ -398,26 +420,15 @@ async function musicRadio(videoId: string, limit: number): Promise<Track[]> {
     isAudioOnly: true,
   };
 
-  let data: any = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      data = await music("next", body);
-      break;
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      // The first 403 means the burst has already begun: take the cooldown now
-      // so the other requests in flight stop piling onto the same rate limit.
-      coolDownGraph();
-      if (attempt === 1) {
-        console.error("[related] music radio unavailable:", detail);
-        return [];
-      }
-      console.error("[related] music radio 403, retrying once:", detail);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+  let data: any;
+  try {
+    data = await music("next", body);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    coolDownGraph();
+    console.error("[related] music radio unavailable:", detail);
+    return [];
   }
-
-  if (!data) return [];
 
   const panels: any[] = [];
   (function walk(node: any) {
@@ -494,40 +505,59 @@ export async function relatedTracks(videoId: string, limit = 20, seedQuery?: str
   const cached = relatedCache.get(videoId);
   if (cached) return cached.slice(0, limit);
 
-  let tracks: Track[] = [];
-  try {
-    tracks = await musicRadio(videoId, Math.max(limit, 30));
-  } catch (err) {
-    console.error("[related] music radio failed:", err instanceof Error ? err.message : err);
-  }
+  const pending = relatedInflight.get(videoId);
+  if (pending) return (await pending).slice(0, limit);
 
-  if (tracks.length < 5 && !graphCoolingDown()) {
-    try {
-      const fallback = await legacyRelated(videoId, seedQuery);
-      const seen = new Set(tracks.map((track) => track.id));
-      tracks = dedupe([...tracks, ...fallback.filter((track) => !seen.has(track.id))]);
-    } catch (err) {
-      console.error("[related] youtube fallback failed:", err instanceof Error ? err.message : err);
-    }
-  }
-
-  // Both graph sources can 403 at once; the music catalogue search still answers,
-  // so keep the queue alive instead of returning nothing.
-  if (tracks.length < 5) {
-    const seed = seedQuery || (await oembedSeed(videoId));
-    if (seed) {
+  const task = (async () => {
+    const radio = musicRadio(videoId, Math.max(limit, 30)).catch((err) => {
+      console.error("[related] music radio failed:", err instanceof Error ? err.message : err);
+      return [];
+    });
+    const catalogue = (async () => {
+      const seed = seedQuery || (await oembedSeed(videoId));
+      if (!seed) return [];
       try {
-        const found = dedupe(await searchTracks(seed, 32)).filter((track) => track.id !== videoId);
-        const seen = new Set(tracks.map((track) => track.id));
-        tracks = dedupe([...tracks, ...found.filter((track) => !seen.has(track.id))]);
+        return dedupe(await relatedCatalogueSearch(seed)).filter((track) => track.id !== videoId);
       } catch (err) {
         console.error("[related] catalogue search fallback failed:", err instanceof Error ? err.message : err);
+        return [];
       }
-    }
-  }
+    })();
 
-  if (tracks.length) relatedCache.set(videoId, tracks, RELATED_TTL);
-  return tracks.slice(0, limit);
+    const first = await Promise.race([
+      radio.then((tracks) => ({ source: "radio" as const, tracks })),
+      catalogue.then((tracks) => ({ source: "catalogue" as const, tracks })),
+    ]);
+
+    let tracks = first.tracks;
+    if (!tracks.length) tracks = await (first.source === "radio" ? catalogue : radio);
+
+    if (tracks.length) relatedCache.set(videoId, tracks, RELATED_TTL);
+
+    void Promise.all([radio, catalogue])
+      .then(async ([radioTracks, catalogueTracks]) => {
+        let improved = dedupe([...radioTracks, ...catalogueTracks]);
+        if (improved.length < 5 && !graphCoolingDown()) {
+          const fallback = await legacyRelated(videoId, seedQuery);
+          improved = dedupe([...improved, ...fallback.filter((track) => track.id !== videoId)]);
+        }
+        if (improved.length) {
+          relatedCache.set(videoId, improved, RELATED_TTL);
+        }
+      })
+      .catch((err) => {
+        console.error("[related] background recommendation fallback failed:", err instanceof Error ? err.message : err);
+      });
+
+    return tracks;
+  })();
+
+  relatedInflight.set(videoId, task);
+  try {
+    return (await task).slice(0, limit);
+  } finally {
+    relatedInflight.delete(videoId);
+  }
 }
 
 export const HOME_SHELVES: { key: string; title: string; query: string }[] = [
