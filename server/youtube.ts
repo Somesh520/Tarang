@@ -173,6 +173,7 @@ function dedupe(tracks: Track[]): Track[] {
 
 const searchCache = new TtlCache<Track[]>(400);
 const SEARCH_TTL = 6 * 60 * 60 * 1000; // 6 hours
+const searchInflight = new Map<string, Promise<Track[]>>();
 
 async function musicSearch(query: string, limit: number): Promise<Track[]> {
   const data = await music("search", {
@@ -292,25 +293,37 @@ export async function searchTracks(query: string, limit = 24): Promise<Track[]> 
   const cached = searchCache.get(cacheKey);
   if (cached) return cached;
 
-  let tracks: Track[] = [];
-  try {
-    tracks = await musicSearch(query, limit);
-  } catch (err) {
-    console.error("[search] music catalogue failed:", err instanceof Error ? err.message : err);
-  }
+  const pending = searchInflight.get(cacheKey);
+  if (pending) return pending;
 
-  if (tracks.length < 3) {
+  const task = (async () => {
+    let tracks: Track[] = [];
     try {
-      const fallback = await legacySearch(query, limit);
-      const seen = new Set(tracks.map((track) => track.id));
-      tracks = dedupe([...tracks, ...fallback.filter((track) => !seen.has(track.id))]).slice(0, limit);
+      tracks = await musicSearch(query, limit);
     } catch (err) {
-      console.error("[search] youtube fallback failed:", err instanceof Error ? err.message : err);
+      console.error("[search] music catalogue failed:", err instanceof Error ? err.message : err);
     }
-  }
 
-  if (tracks.length) searchCache.set(cacheKey, tracks, SEARCH_TTL);
-  return tracks;
+    if (tracks.length < 3) {
+      try {
+        const fallback = await legacySearch(query, limit);
+        const seen = new Set(tracks.map((track) => track.id));
+        tracks = dedupe([...tracks, ...fallback.filter((track) => !seen.has(track.id))]).slice(0, limit);
+      } catch (err) {
+        console.error("[search] youtube fallback failed:", err instanceof Error ? err.message : err);
+      }
+    }
+
+    if (tracks.length) searchCache.set(cacheKey, tracks, SEARCH_TTL);
+    return tracks;
+  })();
+
+  searchInflight.set(cacheKey, task);
+  try {
+    return await task;
+  } finally {
+    searchInflight.delete(cacheKey);
+  }
 }
 
 const relatedCache = new TtlCache<Track[]>(300);

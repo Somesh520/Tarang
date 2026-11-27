@@ -72,8 +72,14 @@ const server = Bun.serve({
       }
 
       if (path === "/api/home") {
+        const offset = Number(url.searchParams.get("offset") || 0);
+        const requestedLimit = Number(url.searchParams.get("limit") || HOME_SHELVES.length);
+        if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(requestedLimit) || requestedLimit < 1) {
+          return fail("BAD_PAGINATION", "Invalid home shelf range.");
+        }
+        const shelvesToLoad = HOME_SHELVES.slice(offset, offset + Math.min(requestedLimit, HOME_SHELVES.length));
         const shelves = await Promise.all(
-          HOME_SHELVES.map(async (shelf) => {
+          shelvesToLoad.map(async (shelf) => {
             try {
               const tracks = await searchTracks(shelf.query, 14);
               tracks.forEach((track) => rememberMeta(track));

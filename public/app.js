@@ -274,7 +274,7 @@ function rowsHTML(tracks, listKey, options = {}) {
           ${showIndex ? `<span class="idx-num">${i + 1}</span>` : ""}
           <span class="idx-play">${icon("play")}</span>
         </span>
-        <img class="thumb" src="${esc(track.thumbnail)}" alt="" loading="lazy" />
+        <img class="thumb" src="${esc(track.thumbnail)}" alt="" loading="lazy" decoding="async" />
         <div class="t-main">
           <div class="t-title">${esc(track.title)}</div>
           <div class="t-artist">${esc(track.artist)}</div>
@@ -295,7 +295,7 @@ function cardsHTML(tracks, listKey) {
         (track) => `
       <div class="card" data-track-id="${esc(track.id)}" tabindex="0" role="button" aria-label="Play ${esc(track.title)}">
         <div class="cover-wrap">
-          <img src="${esc(track.thumbnail)}" alt="" loading="lazy" />
+          <img src="${esc(track.thumbnail)}" alt="" loading="lazy" decoding="async" />
           <span class="play-fab">${icon("play")}</span>
         </div>
         <p class="c-title">${esc(track.title)}</p>
@@ -369,7 +369,7 @@ async function renderHome() {
 
 async function renderColdHome() {
   try {
-    const data = await api("/api/home");
+    const data = await api("/api/home?limit=3");
     if (state.view !== "home") return;
     if (!data.shelves.length) {
       $("#shelves").innerHTML = emptyState("Nothing came back", "The catalogue didn't return results. Check your connection and reload.");
@@ -385,9 +385,26 @@ async function renderColdHome() {
     $("#shelves").innerHTML =
       hint +
       data.shelves
+        .filter((shelf) => shelf.tracks.length)
         .map((shelf) => shelfHTML(`home-${shelf.key}`, shelf.title, `${shelf.tracks.length} tracks · YouTube player`, shelf.tracks, shelf.query))
-        .join("");
+        .join("") +
+      `<div id="homeMore">${Array.from({ length: 3 }).map(() => `<div class="section"><div class="sk-line skeleton" style="width:180px;height:14px"></div>${skeletonCards()}</div>`).join("")}</div>`;
     markPlaying();
+
+    try {
+      const more = await api(`/api/home?offset=${data.shelves.length}&limit=6`);
+      if (state.view !== "home") return;
+      const shelves = more.shelves.filter((shelf) => shelf.tracks.length);
+      $("#homeMore").innerHTML = shelves.length
+        ? shelves.map((shelf) => shelfHTML(`home-${shelf.key}`, shelf.title, `${shelf.tracks.length} tracks · YouTube player`, shelf.tracks, shelf.query)).join("")
+        : data.shelves.some((shelf) => shelf.tracks.length)
+          ? ""
+          : emptyState("Nothing came back", "The catalogue didn't return results. Check your connection and reload.");
+      markPlaying();
+    } catch (error) {
+      if (state.view !== "home") return;
+      $("#homeMore").innerHTML = emptyState("More shelves didn't load", error.message || "Check your connection and try again.");
+    }
   } catch (err) {
     $("#shelves").innerHTML = emptyState("Couldn't load the shelves", err.message);
   }
@@ -402,7 +419,7 @@ async function renderPersonalHome(profile) {
       ? api(`/api/related?id=${encodeURIComponent(last.id)}&limit=26`).catch(() => ({ tracks: [] }))
       : Promise.resolve({ tracks: [] }),
     ...seeds.map((name) => api(`/api/search?q=${encodeURIComponent(`${name} songs`)}&limit=14`).catch(() => ({ tracks: [] }))),
-    api("/api/home").catch(() => ({ shelves: [] })),
+    api("/api/home?limit=2").catch(() => ({ shelves: [] })),
   ];
 
   const results = await Promise.all(requests);
