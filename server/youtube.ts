@@ -348,12 +348,24 @@ function lockupToTrack(item: any): Track | null {
  * seed song. Music-only and artist-coherent, unlike the video watch-next graph.
  */
 async function musicRadio(videoId: string, limit: number): Promise<Track[]> {
-  const data = await music("next", {
+  const body = {
     context: musicContext,
     videoId,
     playlistId: `RDAMVM${videoId}`,
     isAudioOnly: true,
-  });
+  };
+
+  let data: any;
+  try {
+    data = await music("next", body);
+  } catch (err) {
+    // YouTube rate-limits bursts of `next` calls with a 403 that clears in
+    // under a second, so one short retry recovers the radio instead of
+    // dropping the whole recommendation list.
+    console.error("[related] music radio 403, retrying:", err instanceof Error ? err.message : err);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    data = await music("next", body);
+  }
 
   const panels: any[] = [];
   (function walk(node: any) {
@@ -368,6 +380,21 @@ async function musicRadio(videoId: string, limit: number): Promise<Track[]> {
   return dedupe(panels.map(panelItemToTrack).filter((t): t is Track => t !== null))
     .filter((track) => track.id !== videoId)
     .slice(0, limit);
+}
+
+/** oEmbed gives the real title + channel when the caller has no cached metadata. */
+async function oembedSeed(videoId: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+      { signal: AbortSignal.timeout(6_000) },
+    );
+    if (!res.ok) return "";
+    const meta: any = await res.json();
+    return meta?.title ? `${meta.title} ${meta.author_name || ""}`.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 async function legacyRelated(videoId: string, seedQuery?: string): Promise<Track[]> {
@@ -395,23 +422,9 @@ async function legacyRelated(videoId: string, seedQuery?: string): Promise<Track
 
   // watch-next is blocked on datacenter IPs, so build the seed for the search
   // fallback from oEmbed when the caller has no cached metadata for this id.
-  let seed = seedQuery;
-  if (!seed) {
-    try {
-      const res = await fetch(
-        `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
-        { signal: AbortSignal.timeout(6_000) },
-      );
-      if (res.ok) {
-        const meta: any = await res.json();
-        if (meta?.title) seed = `${meta.title} ${meta.author_name || ""}`.trim();
-      }
-    } catch {
-      /* ignore, handled below */
-    }
-  }
-
+  const seed = seedQuery || (await oembedSeed(videoId));
   if (!seed) return [];
+
   const alt = await searchTracks(seed, 32);
   return dedupe(alt).filter((track) => track.id !== videoId);
 }
@@ -434,6 +447,21 @@ export async function relatedTracks(videoId: string, limit = 20, seedQuery?: str
       tracks = dedupe([...tracks, ...fallback.filter((track) => !seen.has(track.id))]);
     } catch (err) {
       console.error("[related] youtube fallback failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Both graph sources can 403 at once; the music catalogue search still answers,
+  // so keep the queue alive instead of returning nothing.
+  if (tracks.length < 5) {
+    const seed = seedQuery || (await oembedSeed(videoId));
+    if (seed) {
+      try {
+        const found = dedupe(await searchTracks(seed, 32)).filter((track) => track.id !== videoId);
+        const seen = new Set(tracks.map((track) => track.id));
+        tracks = dedupe([...tracks, ...found.filter((track) => !seen.has(track.id))]);
+      } catch (err) {
+        console.error("[related] catalogue search fallback failed:", err instanceof Error ? err.message : err);
+      }
     }
   }
 

@@ -953,6 +953,14 @@ async function startTrack(track, options = {}) {
     useEmbeddedPlayer(track);
   });
 
+  // Don't leave the player spinning forever when a source never delivers audio.
+  clearTimeout(state.startWatchdog);
+  state.startWatchdog = setTimeout(() => {
+    if (state.current?.id !== track.id || !audio.paused) return;
+    toast("This track isn't loading. Skipping.", "err");
+    if (state.queue.length > 1) nextTrack(true);
+  }, 20_000);
+
   // Metadata only decorates the UI; playback never waits on it.
   api(`/api/track?id=${encodeURIComponent(track.id)}&quality=${store.quality}`)
     .then((data) => {
@@ -1218,6 +1226,7 @@ function updateMediaSession(track) {
 /* ------------------------------ audio events ------------------------------ */
 
 audio.addEventListener("loadedmetadata", () => {
+  clearTimeout(state.startWatchdog);
   $("#playBtn").classList.remove("loading");
   state.loading = false;
   updateProgress();
@@ -1229,6 +1238,7 @@ audio.addEventListener("play", updatePlayIcon);
 audio.addEventListener("pause", updatePlayIcon);
 
 audio.addEventListener("playing", () => {
+  clearTimeout(state.startWatchdog);
   $("#playBtn").classList.remove("loading");
   state.loading = false;
   updatePlayIcon();
@@ -1243,6 +1253,7 @@ audio.addEventListener("ended", () => {
 });
 
 audio.addEventListener("error", () => {
+  clearTimeout(state.startWatchdog);
   $("#playBtn").classList.remove("loading");
   state.loading = false;
   const track = state.current;

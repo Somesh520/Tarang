@@ -56,8 +56,15 @@ function ytdlpBaseArgs(): string[] {
 const RESOLVE_ATTEMPTS = (process.env.YT_PLAYER_CLIENTS ?? "")
   .split("|")
   .map((entry) => entry.trim());
-const ATTEMPT_TIMEOUT_MS = Number(process.env.YT_ATTEMPT_TIMEOUT_MS) || 50_000;
-const ATTEMPT_BUDGET_MS = ATTEMPT_TIMEOUT_MS + 10_000;
+/**
+ * A music player has to answer fast. YouTube intermittently answers with an
+ * empty player response and then works on the next request, so a fast failure
+ * is retried once — but no attempt is allowed to sit for a minute.
+ */
+const ATTEMPT_TIMEOUT_MS = Number(process.env.YT_ATTEMPT_TIMEOUT_MS) || 15_000;
+const ATTEMPT_BUDGET_MS = Number(process.env.YT_ATTEMPT_BUDGET_MS) || 20_000;
+const RESOLVE_BUDGET_MS = Number(process.env.YT_RESOLVE_BUDGET_MS) || 30_000;
+const FAST_FAIL_MS = 10_000;
 
 /** Itag ladder. Opus 251 (~160k) first, then m4a 140 (~128k) for Safari. */
 const SELECTORS: Record<Quality, string> = {
@@ -80,6 +87,9 @@ const META_TEMPLATE = [
 
 const urlCache = new TtlCache<Resolved>(600);
 const metaCache = new TtlCache<Track>(2000);
+/** A track that just failed fails fast for the next minute instead of re-hanging. */
+const failureCache = new TtlCache<{ code: string; message: string; detail?: string }>(500);
+const FAILURE_TTL = 45_000;
 const inflight = new Map<string, Promise<Resolved>>();
 
 const MAX_CONCURRENT = 3;
@@ -234,8 +244,11 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
   const started = Date.now();
   let last: { code: string; message: string; detail?: string } | null = null;
   const trail: string[] = [];
+  const plan = [...RESOLVE_ATTEMPTS];
+  let retried = false;
 
-  for (const clients of RESOLVE_ATTEMPTS) {
+  while (plan.length) {
+    const clients = plan.shift() as string;
     const args = ytdlpBaseArgs();
     if (clients) args.push("--extractor-args", `youtube:player_client=${clients}`);
     args.push("-f", selector, "-g", "--print", META_TEMPLATE, `https://www.youtube.com/watch?v=${videoId}`);
@@ -256,6 +269,14 @@ async function doResolveYtDlp(videoId: string, quality: Quality): Promise<Resolv
     trail.push(`${clients || "default"}=${last.code}(${took}ms): ${detail || "no stderr"}`);
     if (last.code === "UNAVAILABLE" || last.code === "AGE_RESTRICTED" || last.code === "TIMEOUT") break;
     if (Date.now() - started > ATTEMPT_BUDGET_MS) break;
+
+    // An empty player response usually clears on the next request, so retry the
+    // same client once — but only when the failure came back quickly.
+    if (last.code === "RESOLVE_FAILED" && !retried && Date.now() - started < FAST_FAIL_MS) {
+      retried = true;
+      plan.unshift(clients);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
   }
 
   throw new ResolveError(
@@ -316,13 +337,34 @@ export async function resolve(videoId: string, quality: Quality = "hifi"): Promi
   const cached = urlCache.get(key);
   if (cached) return cached;
 
+  const failed = failureCache.get(key);
+  if (failed) throw new ResolveError(failed.code, failed.message, failed.detail);
+
   const pending = inflight.get(key);
   if (pending) return pending;
 
   const task = (async () => {
     const release = await acquire();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await doResolve(videoId, quality);
+      // Nothing may hold the player hostage: cap the whole resolution, not just
+      // each attempt.
+      const budget = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new ResolveError("TIMEOUT", "The resolver took too long. Try again.", `budget ${RESOLVE_BUDGET_MS}ms`)),
+          RESOLVE_BUDGET_MS,
+        );
+      });
+      try {
+        return await Promise.race([doResolve(videoId, quality), budget]);
+      } catch (err) {
+        if (err instanceof ResolveError) {
+          failureCache.set(key, { code: err.code, message: err.message, detail: err.detail }, FAILURE_TTL);
+        }
+        throw err;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } finally {
       release();
     }
