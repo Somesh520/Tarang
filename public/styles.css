@@ -132,6 +132,9 @@ img{display:block;max-width:100%}
   border-radius:5px;padding:1px 5px;flex:none;
 }
 .top-right{display:flex;align-items:center;gap:12px;margin-left:auto}
+.presence-status{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;color:var(--muted);font-size:11.5px;font-weight:500}
+.presence-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(217,255,75,.1)}
+.presence-status[data-state="unavailable"] .presence-dot{background:var(--muted-2);box-shadow:none}
 .install-app{
   display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;
   padding:0 12px;border:1px solid rgba(217,255,75,.25);border-radius:999px;

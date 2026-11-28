@@ -53,6 +53,15 @@ function fileResponse(path: string, cacheSeconds = 0): Response {
 }
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+const PRESENCE_TTL_MS = 60_000;
+const presenceClients = new Map<string, number>();
+
+function activeVisitorCount(now = Date.now()): number {
+  for (const [id, lastSeen] of presenceClients) {
+    if (now - lastSeen > PRESENCE_TTL_MS) presenceClients.delete(id);
+  }
+  return presenceClients.size;
+}
 
 const server = Bun.serve({
   port: PORT,
@@ -70,6 +79,30 @@ const server = Bun.serve({
           pid: process.pid,
           uptime: Math.round(process.uptime()),
         });
+      }
+
+      if (path === "/api/presence") {
+        if (req.method === "GET") return json({ activeVisitors: activeVisitorCount() });
+        if (req.method !== "POST") return fail("METHOD_NOT_ALLOWED", "Use GET or POST.", 405);
+
+        let payload: unknown;
+        try {
+          payload = await req.json();
+        } catch {
+          return fail("BAD_PRESENCE", "A valid JSON visitor id is required.");
+        }
+        if (
+          !payload ||
+          typeof payload !== "object" ||
+          !("id" in payload) ||
+          typeof payload.id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.id)
+        ) {
+          return fail("BAD_PRESENCE", "A valid JSON visitor id is required.");
+        }
+
+        presenceClients.set(payload.id, Date.now());
+        return json({ activeVisitors: activeVisitorCount() });
       }
 
       if (path === "/api/home") {

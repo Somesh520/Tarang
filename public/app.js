@@ -205,6 +205,61 @@ async function api(path) {
   return data;
 }
 
+function createPresenceId() {
+  return globalThis.crypto?.randomUUID?.() || "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    return (char === "x" ? random : (random & 0x3) | 0x8).toString(16);
+  });
+}
+
+function startPresenceTracking() {
+  const status = $("#presenceCount");
+  const statusContainer = status.parentElement;
+  const storageKey = "tarang.presence.v1";
+  let clientId;
+  try {
+    clientId = localStorage.getItem(storageKey);
+    if (!clientId || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientId)) {
+      clientId = createPresenceId();
+      localStorage.setItem(storageKey, clientId);
+    }
+  } catch {
+    clientId = createPresenceId();
+  }
+
+  let requestPending = false;
+  const updatePresence = async () => {
+    if (document.visibilityState !== "visible" || requestPending) return;
+    requestPending = true;
+    try {
+      const response = await fetch("/api/presence", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ id: clientId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || `Request failed (${response.status})`);
+      if (!Number.isInteger(data.activeVisitors) || data.activeVisitors < 0) {
+        throw new Error("The server returned an invalid visitor count.");
+      }
+      status.textContent = `${data.activeVisitors} online`;
+      statusContainer.dataset.state = "available";
+    } catch (error) {
+      status.textContent = "Online count unavailable";
+      statusContainer.dataset.state = "unavailable";
+      console.error("[presence] Could not update active visitor count:", error);
+    } finally {
+      requestPending = false;
+    }
+  };
+
+  void updatePresence();
+  window.setInterval(updatePresence, 20_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void updatePresence();
+  });
+}
+
 const ICONS = {
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h4v16H7zM14 4h4v16h-4z"/></svg>',
@@ -2064,6 +2119,7 @@ $("#repeatBtn").classList.toggle("active", store.repeat !== "off");
 $("#repeatBtn").classList.toggle("one-mode", store.repeat === "one");
 renderSidebarPlaylists();
 setView("home");
+startPresenceTracking();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
