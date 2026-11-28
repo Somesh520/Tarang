@@ -791,13 +791,39 @@ let advancing = false;
 let advanceToken = 0;
 const AVOIDED_RECOMMENDATION_VARIANTS = /\b(?:lo[\s-]*fi|low[\s-]*fi|remix(?:es|ed|ing)?|mash[\s-]*ups?)\b/i;
 
+function recommendationIdentity(track) {
+  const title = String(track?.title || "")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\s*[\[(](?:from\b|official\b|lyrics?\b|audio\b|lyrical\b|visualizer\b)[^)\]]*[\])]/gi, " ")
+    .replace(/\s+(?:official\s+)?(?:video|audio|lyrics?|lyrical|visualizer|full\s+song)\s*$/i, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  const artist = String(track?.artist || "")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  return { title, artist };
+}
+
+function sameRecommendedSong(first, second) {
+  const a = recommendationIdentity(first);
+  const b = recommendationIdentity(second);
+  return Boolean(a.title && a.title === b.title && (!a.artist || !b.artist || a.artist === b.artist));
+}
+
 function chooseRecommendation(candidates, seed) {
   const seen = new Set();
+  const playedTracks = [seed, ...store.journal];
   const unique = candidates.filter((track) => {
     if (
       !track?.id ||
       track.id === seed.id ||
       seen.has(track.id) ||
+      playedTracks.some((played) => sameRecommendedSong(track, played)) ||
       AVOIDED_RECOMMENDATION_VARIANTS.test(track.title || "")
     ) return false;
     seen.add(track.id);
