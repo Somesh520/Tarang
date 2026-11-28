@@ -796,6 +796,8 @@ function recommendationIdentity(track) {
     .normalize("NFKD")
     .replace(/\p{Diacritic}/gu, "")
     .replace(/\s*[\[(](?:from\b|official\b|lyrics?\b|audio\b|lyrical\b|visualizer\b)[^)\]]*[\])]/gi, " ")
+    .replace(/\s*[\[(][^)\]]*\b(?:version|cover|remake|reprise)\b[^)\]]*[\])]\s*$/i, "")
+    .replace(/\s*[-–—|:]\s*[^|–—:]*\b(?:version|cover|remake|reprise)\b.*$/i, "")
     .replace(/\s+(?:official\s+)?(?:video|audio|lyrics?|lyrical|visualizer|full\s+song)\s*$/i, "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -805,14 +807,20 @@ function recommendationIdentity(track) {
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-  return { title, artist };
+    .split(/\s+/)
+    .filter((word) => word && !["and", "feat", "ft", "official", "topic", "vevo"].includes(word));
+  return { title, artist: new Set(artist) };
 }
 
 function sameRecommendedSong(first, second) {
   const a = recommendationIdentity(first);
   const b = recommendationIdentity(second);
-  return Boolean(a.title && a.title === b.title && (!a.artist || !b.artist || a.artist === b.artist));
+  if (!a.title || a.title !== b.title) return false;
+  if (!a.artist.size || !b.artist.size) return true;
+  let overlap = 0;
+  for (const token of a.artist) if (b.artist.has(token)) overlap += 1;
+  const smallerArtist = Math.min(a.artist.size, b.artist.size);
+  return overlap >= Math.min(2, smallerArtist) && overlap / smallerArtist >= 0.6;
 }
 
 function chooseRecommendation(candidates, seed) {
